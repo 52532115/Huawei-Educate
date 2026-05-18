@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "login_title",
+      "value": "登录"
+    },
+    {
+      "name": "register_title",
+      "value": "注册"
+    },
+    {
+      "name": "verify_code",
+      "value": "验证码"
+    },
+    {
+      "name": "enter_verification_code",
+      "value": "请输入验证码"
+    },
+    {
+      "name": "url",
+      "value": "https://privacy.consumer.huawei.com/legal/huawei-developer-app/privacy-statement.htm?&code=CN&language=zh-CN&branchid=0"
+    }
+  ]
+}

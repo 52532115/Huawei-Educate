@@ -1,0 +1,16 @@
+{
+  "color": [
+    {
+      "name": "login_blue_text_color",
+      "value": "#007DFF"
+    },
+    {
+      "name": "font_gray_color",
+      "value": "#aaaaaa"
+    },
+    {
+      "name": "arrow_color",
+      "value": "#666666"
+    }
+  ]
+}

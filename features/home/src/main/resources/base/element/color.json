@@ -1,0 +1,76 @@
+{
+  "color": [
+    {
+      "name": "white",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "five_percent_white",
+      "value": "#0DFFFFFF"
+    },
+    {
+      "name": "five_percent_black",
+      "value": "#0D000000"
+    },
+    {
+      "name": "sixty_percent_white",
+      "value": "#99FFFFFF"
+    },
+    {
+      "name": "sixty_percent_black",
+      "value": "#99000000"
+    },
+    {
+      "name": "pick_text",
+      "value": "#182431"
+    },
+    {
+      "name": "business_background",
+      "value": "#33FFFFFF"
+    },
+    {
+      "name": "top_start",
+      "value": "#1C60EA"
+    },
+    {
+      "name": "top_end",
+      "value": "#83ABFB"
+    },
+    {
+      "name": "circle_color",
+      "value": "#FFF980"
+    },
+    {
+      "name": "current_period_color",
+      "value": "#1F69FF"
+    },
+    {
+      "name": "investment_name",
+      "value": "#C8974F"
+    },
+    {
+      "name": "liabilities_name",
+      "value": "#C8974F"
+    },
+    {
+      "name": "account_background",
+      "value": "#F7F7F7"
+    },
+    {
+      "name": "image_arrow",
+      "value": "#4d000000"
+    },
+    {
+      "name": "divider_color",
+      "value": "#1a000000"
+    },
+    {
+      "name": "earnings_holding_positions",
+      "value": "#E84026"
+    },
+    {
+      "name": "yesterday_earnings_exponent",
+      "value": "#28AD2B"
+    }
+  ]
+}

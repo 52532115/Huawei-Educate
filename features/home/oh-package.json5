@@ -1,0 +1,14 @@
+{
+  "name": "@safe/home",
+  "version": "1.0.0",
+  "description": "Please describe the basic information.",
+  "main": "Index.ets",
+  "author": "",
+  "license": "Apache-2.0",
+  "packageType": "InterfaceHar",
+  "dependencies": {
+    "@safe/basic": "file:../../common/basic",
+    "@safe/online": "file:../online",
+    "@safe/train": "file:../train"
+  }
+}

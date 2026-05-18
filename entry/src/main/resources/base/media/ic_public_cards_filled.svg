@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  - Copyright (c) 2025 Huawei Device Co., Ltd.
+  - Licensed under the Apache License, Version 2.0 (the "License");
+  - you may not use this file except in compliance with the License.
+  - You may obtain a copy of the License at
+  -
+  -     http://www.apache.org/licenses/LICENSE-2.0
+  -
+  - Unless required by applicable law or agreed to in writing, software
+  - distributed under the License is distributed on an "AS IS" BASIS,
+  - WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  - See the License for the specific language governing permissions and
+  - limitations under the License.
+  -->
+
+<svg width="23px" height="18px" viewBox="0 0 23 18" version="1.1" xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>信用卡</title>
+    <defs>
+        <path d="M22,6 L22,14 C22,16.209139 20.209139,18 18,18 L4,18 C1.790861,18 2.705415e-16,16.209139 0,14 L0,6 L22,6 Z M9.25,8 L2.75,8 C2.33578644,8 2,8.33578644 2,8.75 C2,9.16421356 2.33578644,9.5 2.75,9.5 L2.75,9.5 L9.25,9.5 C9.66421356,9.5 10,9.16421356 10,8.75 C10,8.33578644 9.66421356,8 9.25,8 L9.25,8 Z M4,0 L18,0 C20.1421954,-3.9351491e-16 21.8910789,1.68396847 21.9951047,3.80035966 L22,4 L0,4 C-2.705415e-16,1.790861 1.790861,4.05812251e-16 4,0 Z"
+              id="path-1"></path>
+    </defs>
+    <g id="典型页面-1：首页" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="信用卡" transform="translate(0.700000, 0.000000)">
+            <mask id="mask-2" fill="white">
+                <use xlink:href="#path-1"></use>
+            </mask>
+            <g id="Combined-Shape"></g>
+            <g id="编组" mask="url(#mask-2)">
+                <g transform="translate(-1.000000, -3.000000)" id="Symbol/color-light/colorPrimary">
+                    <rect id="color/#000000" fill="#0A59F7" x="0" y="0" width="24" height="24"></rect>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

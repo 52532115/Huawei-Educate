@@ -1,0 +1,24 @@
+{
+  "color": [
+    {
+      "name": "white",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "page_gray_color",
+      "value": "#f7f7f7"
+    },
+    {
+      "name": "gray_color",
+      "value": "#aaaaaa"
+    },
+    {
+      "name": "blue_text_color",
+      "value": "#007DFF"
+    },
+    {
+      "name": "arrow_color",
+      "value": "#666666"
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "login_title",
+      "value": "Login title"
+    },
+    {
+      "name": "register_title",
+      "value": "Register title"
+    },
+    {
+      "name": "user_agreement",
+      "value": "User Agreement"
+    },
+    {
+      "name": "privacy_policy",
+      "value": "Privacy Policy"
+    },
+    {
+      "name": "verify_code",
+      "value": "Verify Code"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "银行理财"
+    },
+    {
+      "name": "tab_bar_home",
+      "value": "首页"
+    },
+    {
+      "name": "tab_bar_card",
+      "value": "信用卡"
+    },
+    {
+      "name": "tab_bar_fortunes",
+      "value": "财富"
+    },
+    {
+      "name": "tab_bar_life",
+      "value": "生活"
+    },
+    {
+      "name": "tab_bar_mine",
+      "value": "我的"
+    },
+    {
+      "name": "common_image_width",
+      "value": "24vp"
+    },
+    {
+      "name": "common_image_height",
+      "value": "24vp"
+    },
+    {
+      "name": "tab_text_size",
+      "value": "10fp"
+    },
+    {
+      "name": "tab_text_height",
+      "value": "14vp"
+    },
+    {
+      "name": "tab_bar_width",
+      "value": "96vp"
+    },
+    {
+      "name": "tab_string_home",
+      "value": "首页"
+    },
+    {
+      "name": "tab_string_train",
+      "value": "课程"
+    },
+    {
+      "name": "tab_string_online",
+      "value": "消息"
+    },
+    {
+      "name": "tab_string_mine",
+      "value": "我的"
+    }
+  ]
+}

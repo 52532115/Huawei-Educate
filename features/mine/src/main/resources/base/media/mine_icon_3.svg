@@ -1,0 +1,21 @@
+<?xml version="1.0" standalone="no"?><!--
+  - Copyright (c) 2025 Huawei Device Co., Ltd.
+  - Licensed under the Apache License, Version 2.0 (the "License");
+  - you may not use this file except in compliance with the License.
+  - You may obtain a copy of the License at
+  -
+  -     http://www.apache.org/licenses/LICENSE-2.0
+  -
+  - Unless required by applicable law or agreed to in writing, software
+  - distributed under the License is distributed on an "AS IS" BASIS,
+  - WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  - See the License for the specific language governing permissions and
+  - limitations under the License.
+  -->
+
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg t="1718258990138" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg"
+     p-id="25411" width="256" height="256">
+    <path d="M900.053959 643.253177V56.179863c0-31.030303-25.14956-56.179863-56.179863-56.179863H87.885826C56.855523 0.125122 31.705963 25.14956 31.705963 56.179863v872.226784c0 31.030303 25.14956 56.179863 56.179863 56.179863h526.389052c36.035191 24.774194 79.702835 39.41349 126.748778 39.41349 123.495601 0 223.593353-100.097752 223.593353-223.593353 0-61.184751-24.649071-116.739003-64.56305-157.15347z m-429.669599-8.883676H150.572043v-79.702834h319.937439v79.702834z m0-174.545454H150.572043v-79.702835h319.937439v79.702835z m128.125122-206.451613H150.572043v-79.702835h447.937439v79.702835z m285.028348 628.989247L827.483089 938.2913l-77.325513-77.325513-91.464321 91.464321-55.929619-56.054741 91.464321-91.464321-91.464321-91.464321 55.929619-55.929618 91.464321 91.46432 77.325513-77.325513 55.929619 55.929619-77.325513 77.325513 77.450635 77.450635z"
+          p-id="25412"></path>
+</svg>

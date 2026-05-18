@@ -1,0 +1,156 @@
+{
+  "string": [
+    {
+      "name": "page_show",
+      "value": "page from package"
+    },
+    {
+      "name": "shared_desc",
+      "value": "description"
+    },
+    {
+      "name": "prv_location",
+      "value": "行业模板工程代码展示"
+    },
+    {
+      "name": "prv_location_en",
+      "value": "Zhejiang Safety Production Network College"
+    },
+    {
+      "name": "gps_location",
+      "value": "南京"
+    },
+    {
+      "name": "search_placeholder",
+      "value": "搜索..."
+    },
+    {
+      "name": "home_account",
+      "value": "行业模板"
+    },
+    {
+      "name": "home_details",
+      "value": "基础模板"
+    },
+    {
+      "name": "home_transfers",
+      "value": "通用模板"
+    },
+    {
+      "name": "home_loans",
+      "value": "注册模板"
+    },
+    {
+      "name": "home_fund_investment",
+      "value": "基金投资"
+    },
+    {
+      "name": "home_wealth_products",
+      "value": "理财产品"
+    },
+    {
+      "name": "home_cards",
+      "value": "信用卡"
+    },
+    {
+      "name": "home_notes",
+      "value": "账单"
+    },
+    {
+      "name": "home_quick_profit",
+      "value": "速盈"
+    },
+    {
+      "name": "home_precious_metals",
+      "value": "贵金属"
+    },
+    {
+      "name": "home_deposits",
+      "value": "存款产品"
+    },
+    {
+      "name": "home_payment",
+      "value": "缴费"
+    },
+    {
+      "name": "home_quick_loan",
+      "value": "快贷"
+    },
+    {
+      "name": "home_more",
+      "value": "更多"
+    },
+    {
+      "name": "swiper_image",
+      "value": "swiper"
+    },
+    {
+      "name": "swiper_text_one",
+      "value": "江苏省应急管理厅关于印发《中小企业安全生产 应知应会宣传培训实施方案》的通知"
+    },
+    {
+      "name": "swiper_text_two",
+      "value": "管理厅关于进一步落实企业安全生产主题责任的通知"
+    },
+    {
+      "name": "swiper_text_three",
+      "value": "省应急管理厅迅速传达学习重要讲话精神"
+    },
+    {
+      "name": "list1",
+      "value": "数据结构"
+    },
+    {
+      "name": "list2",
+      "value": "计算机网络"
+    },
+    {
+      "name": "list3",
+      "value": "操作系统"
+    },
+    {
+      "name": "list4",
+      "value": "数据库系统原理"
+    },
+    {
+      "name": "list5",
+      "value": "软件工程导论"
+    },
+    {
+      "name": "list6",
+      "value": "计算机组成原理"
+    },
+    {
+      "name": "home_list",
+      "value": "在中医眼里五谷是最养人的食物，在中医眼里五谷是最养人的食物"
+    },
+    {
+      "name": "home_list_two",
+      "value": "一天一苹果医生远离我"
+    },
+    {
+      "name": "home_fortune_picks",
+      "value": "推荐课程"
+    },
+    {
+      "name": "home_fortune_all",
+      "value": "查看全部"
+    },
+    {
+      "name": "account_all_info",
+      "value": "账户总览"
+    },
+    {
+      "name": "home_page",
+      "value": "首页"
+    },
+    {
+      "name": "enterprise_category",
+      "value": "企业类别"
+    },
+    {
+      "name": "online_training",
+      "value": "在线培训"
+    }
+  ]
+}

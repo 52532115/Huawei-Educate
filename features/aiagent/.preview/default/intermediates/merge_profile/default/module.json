@@ -1,0 +1,31 @@
+{
+	"app": {
+		"bundleName": "com.example.safetacademy",
+		"debug": true,
+		"versionCode": 1000000,
+		"versionName": "1.0.0",
+		"minAPIVersion": 60000020,
+		"targetAPIVersion": 60000020,
+		"apiReleaseType": "Release",
+		"targetMinorAPIVersion": 0,
+		"targetPatchAPIVersion": 0,
+		"compileSdkVersion": "6.0.2.130",
+		"compileSdkType": "HarmonyOS",
+		"appEnvironments": [],
+		"bundleType": "app",
+		"buildMode": "debug"
+	},
+	"module": {
+		"name": "aiagent",
+		"type": "har",
+		"description": "$string:shared_desc",
+		"routerMap": "$profile:route_map",
+		"deviceTypes": [
+			"phone",
+			"tablet",
+			"2in1"
+		],
+		"packageName": "@safe/aiagent",
+		"installationFree": false
+	}
+}

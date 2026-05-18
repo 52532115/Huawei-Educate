@@ -1,0 +1,36 @@
+{
+  "string": [
+    {
+      "name": "login_title",
+      "value": "Login title"
+    },
+    {
+      "name": "register_title",
+      "value": "Register title"
+    },
+    {
+      "name": "verify_code",
+      "value": "Verify Code"
+    },
+    {
+      "name": "user_agreement",
+      "value": "User Agreement"
+    },
+    {
+      "name": "privacy_policy",
+      "value": "Privacy Policy"
+    },
+    {
+      "name": "shared_desc",
+      "value": "description"
+    },
+    {
+      "name": "enter_verification_code",
+      "value": "Please enter the verification code."
+    },
+    {
+      "name": "url",
+      "value": "https://privacy.consumer.huawei.com/legal/huawei-developer-app/privacy-statement.htm?&code=CN&language=zh-CN&branchid=0"
+    }
+  ]
+}

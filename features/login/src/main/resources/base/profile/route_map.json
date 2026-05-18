@@ -1,0 +1,34 @@
+{
+  "routerMap": [
+    {
+      "name": "LoginView",
+      "pageSourceFile": "src/main/ets/views/LoginView.ets",
+      "buildFunction": "LoginViewBuilder"
+    },
+    {
+      "name": "RegisterView",
+      "pageSourceFile": "src/main/ets/views/RegisterView.ets",
+      "buildFunction": "RegisterViewBuilder"
+    },
+    {
+      "name": "PolicyAgreement",
+      "pageSourceFile": "src/main/ets/views/PolicyAgreement.ets",
+      "buildFunction": "PolicyAgreementBuilder"
+    },
+    {
+      "name": "ModifyPasswordView",
+      "pageSourceFile": "src/main/ets/views/ModifyPasswordView.ets",
+      "buildFunction": "ModifyPasswordViewBuilder"
+    },
+    {
+      "name": "LogoutView",
+      "pageSourceFile": "src/main/ets/views/LogoutView.ets",
+      "buildFunction": "LogoutViewBuilder"
+    },
+    {
+      "name": "LogoutNextView",
+      "pageSourceFile": "src/main/ets/views/LogoutNextView.ets",
+      "buildFunction": "LogoutNextViewBuilder"
+    }
+  ]
+}

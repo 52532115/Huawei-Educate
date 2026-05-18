@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 智能助教 — 架构设计图</title>
+<style>
+  :root {
+    --primary: #1A56DB;
+    --primary-light: #E8F0FE;
+    --primary-dark: #0F3D9E;
+    --accent: #10B981;
+    --accent-light: #D1FAE5;
+    --warning: #F59E0B;
+    --warning-light: #FEF3C7;
+    --gray-50: #F9FAFB;
+    --gray-100: #F3F4F6;
+    --gray-200: #E5E7EB;
+    --gray-300: #D1D5DB;
+    --gray-400: #9CA3AF;
+    --gray-500: #6B7280;
+    --gray-600: #4B5563;
+    --gray-700: #374151;
+    --gray-800: #1F2937;
+    --gray-900: #111827;
+    --white: #FFFFFF;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+    --shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
+    --shadow-lg: 0 10px 15px rgba(0,0,0,0.1), 0 4px 6px rgba(0,0,0,0.05);
+    --radius: 12px;
+    --radius-sm: 8px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: #F0F2F5;
+    color: var(--gray-800);
+    line-height: 1.6;
+    padding: 24px;
+  }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  /* Page Title */
+  .page-header {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+  .page-header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--gray-900);
+    margin-bottom: 8px;
+  }
+  .page-header p {
+    color: var(--gray-500);
+    font-size: 14px;
+  }
+
+  /* Section */
+  .section {
+    background: var(--white);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+  .section-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--gray-200);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .section-header .icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+  .section-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--gray-800);
+  }
+  .section-body {
+    padding: 24px;
+  }
+
+  /* --- 1. Navigation Bar Diagram --- */
+  .phone-frame {
+    width: 400px;
+    margin: 0 auto;
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+  }
+  .phone-statusbar {
+    height: 32px;
+    background: var(--gray-50);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: var(--gray-400);
+  }
+  .phone-content {
+    height: 360px;
+    background: var(--gray-50);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    border-top: 1px solid var(--gray-100);
+    border-bottom: 1px solid var(--gray-100);
+  }
+  .phone-content .chat-preview {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    gap: 12px;
+  }
+  .phone-content .chat-bubble {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .chat-bubble.ai {
+    align-self: flex-start;
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-bottom-left-radius: 4px;
+  }
+  .chat-bubble.user {
+    align-self: flex-end;
+    background: var(--primary);
+    color: var(--white);
+    border-bottom-right-radius: 4px;
+  }
+  .chat-bubble.card {
+    align-self: flex-start;
+    background: var(--white);
+    border: 1px solid var(--primary-light);
+    border-radius: 12px;
+    padding: 12px;
+    max-width: 88%;
+    width: 88%;
+  }
+  .card-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--primary);
+    margin-bottom: 6px;
+  }
+  .card-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .card-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+  }
+  .card-bar-row .label { width: 48px; color: var(--gray-600); text-align: right; }
+  .card-bar-row .bar {
+    flex: 1;
+    height: 8px;
+    background: var(--gray-100);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .card-bar-row .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+  }
+
+  .phone-tabbar {
+    display: flex;
+    background: var(--white);
+    padding: 6px 0;
+  }
+  .phone-tabbar .tab-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 0;
+    font-size: 10px;
+    color: var(--gray-400);
+    cursor: pointer;
+    transition: color 0.2s;
+  }
+  .phone-tabbar .tab-item .tab-icon {
+    font-size: 20px;
+    line-height: 1;
+  }
+  .phone-tabbar .tab-item.active {
+    color: var(--primary);
+    font-weight: 600;
+  }
+  .phone-tabbar .tab-item.new {
+    position: relative;
+  }
+  .phone-tabbar .tab-item.new::after {
+    content: 'NEW';
+    position: absolute;
+    top: -4px;
+    right: 8px;
+    font-size: 8px;
+    background: #EF4444;
+    color: white;
+    padding: 1px 5px;
+    border-radius: 10px;
+    font-weight: 700;
+  }
+
+  .nav-arrow {
+    position: absolute;
+    bottom: -38px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #EF4444;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .nav-arrow .arrow-line {
+    width: 2px;
+    height: 16px;
+    background: #EF4444;
+  }
+  .nav-arrow .arrow-head {
+    width: 0; height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid #EF4444;
+  }
+
+  /* --- 2. Architecture Diagram --- */
+  .arch-diagram {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .arch-row {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .arch-box {
+    border-radius: var(--radius-sm);
+    padding: 16px 20px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: var(--shadow-sm);
+    min-width: 100px;
+  }
+  .arch-box .sub {
+    font-size: 11px;
+    font-weight: 400;
+    margin-top: 4px;
+    opacity: 0.8;
+  }
+
+  .arch-entry     { background: var(--primary); color: white; }
+  .arch-feature   { background: var(--primary-light); color: var(--primary-dark); border: 1px solid var(--primary); }
+  .arch-new       { background: var(--accent-light); color: #065F46; border: 2px solid var(--accent); }
+  .arch-common    { background: var(--warning-light); color: #92400E; border: 1px solid var(--warning); }
+  .arch-data      { background: var(--gray-100); color: var(--gray-700); border: 1px solid var(--gray-300); }
+  .arch-external  { background: #F3E8FF; color: #6B21A8; border: 1px solid #A855F7; }
+
+  .arch-connector {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: var(--gray-400);
+    font-size: 20px;
+    height: 24px;
+  }
+  .arch-connector.horizontal {
+    width: 40px;
+    height: auto;
+    flex-shrink: 0;
+  }
+
+  .arch-layer-label {
+    font-size: 11px;
+    color: var(--gray-500);
+    text-align: center;
+    margin-bottom: 4px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  /* --- 3. Data Flow --- */
+  .dataflow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    flex-wrap: wrap;
+    padding: 8px 0;
+  }
+  .df-node {
+    padding: 12px 18px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+  }
+  .df-source { background: #DBEAFE; color: #1E40AF; }
+  .df-collect { background: #E0E7FF; color: #3730A3; }
+  .df-ai { background: #D1FAE5; color: #065F46; }
+  .df-ui { background: #FEE2E2; color: #991B1B; }
+  .df-arrow {
+    font-size: 18px;
+    color: var(--gray-400);
+    margin: 0 4px;
+    font-weight: 700;
+  }
+
+  /* --- 4. Module Detail --- */
+  .module-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+  }
+  .module-card {
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--white);
+  }
+  .module-card .card-head {
+    padding: 10px 14px;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--white);
+  }
+  .module-card .card-body {
+    padding: 10px 14px;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--gray-600);
+  }
+  .module-card .card-body ul {
+    list-style: none;
+    padding: 0;
+  }
+  .module-card .card-body ul li::before {
+    content: '▸ ';
+    color: var(--gray-400);
+  }
+
+  .mc-blue  { background: var(--primary); }
+  .mc-green { background: var(--accent); }
+  .mc-amber { background: var(--warning); }
+
+  /* --- 5. Route Navigation --- */
+  .route-map {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+  }
+  .route-node {
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--gray-100);
+    border: 1px solid var(--gray-300);
+  }
+  .route-node.root { background: var(--primary); color: white; border: none; font-weight: 600; }
+  .route-node.new  { background: var(--accent-light); color: #065F46; border: 2px solid var(--accent); font-weight: 600; }
+  .route-line {
+    width: 2px;
+    height: 16px;
+    background: var(--gray-300);
+  }
+  .route-branch {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  /* Utilities */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .badge-new { background: #D1FAE5; color: #065F46; }
+  .badge-mod { background: #FEF3C7; color: #92400E; }
+
+  .highlight-box {
+    border: 2px dashed var(--accent);
+    border-radius: var(--radius-sm);
+    padding: 4px;
+    position: relative;
+  }
+  .highlight-box::before {
+    content: '✨ 新增模块';
+    position: absolute;
+    top: -12px;
+    left: 12px;
+    background: var(--accent);
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 10px;
+  }
+
+  .flex-center { display: flex; align-items: center; justify-content: center; }
+  .gap-12 { gap: 12px; }
+  .mt-8 { margin-top: 8px; }
+  .mt-16 { margin-top: 16px; }
+  .mb-8 { margin-bottom: 8px; }
+  .text-center { text-align: center; }
+  .text-sm { font-size: 12px; }
+  .text-xs { font-size: 11px; }
+  .text-gray { color: var(--gray-500); }
+
+  @media print {
+    body { background: white; padding: 0; }
+    .section { box-shadow: none; break-inside: avoid; margin-bottom: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="page-header">
+    <h1>AI 智能助教 — 架构设计图</h1>
+    <p>Education_Framework_Code_V1 · 2026-05-18 · V1.0</p>
+  </div>
+
+  <!-- ====== 1: TAB NAVIGATION ====== -->
+  <div class="section">
+    <div class="section-header">
+      <div class="icon" style="background:#E8F0FE;">📱</div>
+      <h2>一、底部 Tab 导航栏改造</h2>
+    </div>
+    <div class="section-body">
+      <div class="phone-frame">
+        <div class="phone-statusbar">HarmonyOS 状态栏</div>
+        <div class="phone-content">
+          <div class="chat-preview">
+            <div style="text-align:center;color:var(--gray-400);font-size:11px;margin-bottom:4px;">AI 助教 · 对话界面预览</div>
+            <div class="chat-bubble ai">
+              👋 你好！我是你的 AI 学习助教。<br>我可以帮你分析学习成绩、解答问题、制定学习计划。
+            </div>
+            <div class="chat-bubble card">
+              <div class="card-title">📊 学习概览报告</div>
+              <div class="card-bars">
+                <div class="card-bar-row">
+                  <span class="label">考试成绩</span>
+                  <div class="bar"><div class="bar-fill" style="width:78%;background:var(--primary);"></div></div>
+                  <span>78分</span>
+                </div>
+                <div class="card-bar-row">
+                  <span class="label">课程进度</span>
+                  <div class="bar"><div class="bar-fill" style="width:62%;background:var(--accent);"></div></div>
+                  <span>62%</span>
+                </div>
+                <div class="card-bar-row">
+                  <span class="label">知识点</span>
+                  <div class="bar"><div class="bar-fill" style="width:45%;background:var(--warning);"></div></div>
+                  <span>45%</span>
+                </div>
+              </div>
+              <div style="font-size:10px;color:var(--gray-500);margin-top:6px;">⚠ 薄弱环节：计算机网络 (45%)、数据结构 (52%)</div>
+            </div>
+            <div class="chat-bubble user">帮我重点补一下计算机网络</div>
+            <div class="chat-bubble ai">好的！根据你的错题分析，建议从 TCP/IP 协议栈开始…</div>
+          </div>
+        </div>
+        <div class="phone-tabbar">
+          <div class="tab-item">
+            <span class="tab-icon">🏠</span> 首页
+          </div>
+          <div class="tab-item">
+            <span class="tab-icon">📚</span> 培训
+          </div>
+          <div class="tab-item active new">
+            <span class="tab-icon">🤖</span> AI助教
+          </div>
+          <div class="tab-item">
+            <span class="tab-icon">💬</span> 消息
+          </div>
+          <div class="tab-item">
+            <span class="tab-icon">👤</span> 我的
+          </div>
+        </div>
+        <div style="position:relative;height:0;">
+          <div style="position:absolute;bottom:6px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;">
+            <div style="font-size:10px;color:#EF4444;font-weight:700;">NEW</div>
+            <div style="width:2px;height:14px;background:#EF4444;"></div>
+            <div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid #EF4444;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-16">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="background:var(--primary);color:white;">
+              <th style="padding:8px 12px;text-align:left;">索引</th>
+              <th style="padding:8px 12px;text-align:left;">名称</th>
+              <th style="padding:8px 12px;text-align:left;">图标</th>
+              <th style="padding:8px 12px;text-align:left;">组件</th>
+              <th style="padding:8px 12px;text-align:left;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom:1px solid var(--gray-200);">
+              <td style="padding:8px 12px;">0</td><td style="padding:8px 12px;">首页</td><td style="padding:8px 12px;">🏠</td><td style="padding:8px 12px;">HomeView</td><td></td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--gray-200);">
+              <td style="padding:8px 12px;">1</td><td style="padding:8px 12px;">培训</td><td style="padding:8px 12px;">📚</td><td style="padding:8px 12px;">TrainPage</td><td></td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--gray-200);background:#D1FAE5;">
+              <td style="padding:8px 12px;">2</td><td style="padding:8px 12px;"><strong>AI 助教</strong></td><td style="padding:8px 12px;">🤖</td><td style="padding:8px 12px;"><strong>AiChatView</strong></td><td><span class="badge badge-new">新增</span></td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--gray-200);">
+              <td style="padding:8px 12px;">3</td><td style="padding:8px 12px;">消息</td><td style="padding:8px 12px;">💬</td><td style="padding:8px 12px;">OnlineIndexView</td><td></td>
+            </tr>
+            <tr>
+              <td style="padding:8px 12px;">4</td><td style="padding:8px 12px;">我的</td><td style="padding:8px 12px;">👤</td><td style="padding:8px 12px;">MinePage</td><td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== 2: MODULE ARCHITECTURE ====== -->
+  <div class="section">
+    <div class="section-header">
+      <div class="icon" style="background:#D1FAE5;">🏗️</div>
+      <h2>二、整体模块架构图</h2>
+    </div>
+    <div class="section-body">
+      <div class="arch-diagram">
+
+        <!-- App Entry Layer -->
+        <div class="arch-layer-label">应用入口层</div>
+        <div class="arch-row">
+          <div class="arch-box arch-entry" style="min-width:280px;">
+            Entry Module (entry/)
+            <div class="sub">EntryAbility → Index.ets → Tabs + CustomTabBar</div>
+          </div>
+        </div>
+
+        <div class="arch-connector">▼ ▼ ▼ ▼ ▼</div>
+
+        <!-- Feature Layer -->
+        <div class="arch-layer-label">功能模块层 (Features)</div>
+        <div class="arch-row">
+          <div class="arch-box arch-feature">
+            Home<br><span class="sub">首页</span>
+          </div>
+          <div class="arch-box arch-feature">
+            Train<br><span class="sub">培训</span>
+          </div>
+          <div class="highlight-box">
+            <div class="arch-box arch-new" style="min-width:130px;">
+              🤖 AI Agent<br><span class="sub">AI 智能助教</span>
+            </div>
+          </div>
+          <div class="arch-box arch-feature">
+            Online<br><span class="sub">消息</span>
+          </div>
+          <div class="arch-box arch-feature">
+            Mine<br><span class="sub">我的</span>
+          </div>
+        </div>
+
+        <div class="arch-connector">▼ ▼ ▼ ▼ ▼</div>
+
+        <!-- Common Layer -->
+        <div class="arch-layer-label">公共基础层</div>
+        <div class="arch-row">
+          <div class="arch-box arch-common" style="min-width:280px;">
+            Common / Basic Module
+            <div class="sub">Logger · PreferencesUtil · ResManager · BreakpointUtil · StyleConstants</div>
+          </div>
+        </div>
+
+        <div class="arch-connector">▼</div>
+
+        <!-- External -->
+        <div class="arch-layer-label">外部服务</div>
+        <div class="arch-row">
+          <div class="arch-box arch-external">
+            AI 后端 API
+            <div class="sub">Chat Completions / SSE 流式响应</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== 3: AI AGENT MODULE INTERNALS ====== -->
+  <div class="section">
+    <div class="section-header">
+      <div class="icon" style="background:#E0E7FF;">🧩</div>
+      <h2>三、AI Agent 模块内部架构</h2>
+    </div>
+    <div class="section-body">
+      <div class="module-grid">
+        <div class="module-card">
+          <div class="card-head mc-blue">📱 Components (UI 组件层)</div>
+          <div class="card-body">
+            <ul>
+              <li>AiChatView.ets — 聊天主视图</li>
+              <li>ChatBubble.ets — 聊天气泡</li>
+              <li>AnalysisCard.ets — 分析报告卡片</li>
+              <li>RecommendQuestions.ets — 推荐问题</li>
+              <li>TypingIndicator.ets — 等待动画</li>
+              <li>HistoryDrawer.ets — 历史对话</li>
+            </ul>
+          </div>
+        </div>
+        <div class="module-card">
+          <div class="card-head mc-green">🧠 ViewModel (数据模型层)</div>
+          <div class="card-body">
+            <ul>
+              <li>ChatViewModel.ets — 消息管理</li>
+              <li>AnalysisViewModel.ets — 分析数据</li>
+              <li>ChatSessionModel.ets — 会话管理</li>
+              <li>MessageItem.ets — 消息数据结构</li>
+            </ul>
+          </div>
+        </div>
+        <div class="module-card">
+          <div class="card-head mc-amber">🔌 Service (服务层)</div>
+          <div class="card-body">
+            <ul>
+              <li>AiService.ets — AI API 调用</li>
+              <li>DataCollectService.ets — 学习数据采集</li>
+              <li>SseClient.ets — SSE 流式解析</li>
+            </ul>
+          </div>
+        </div>
+        <div class="module-card">
+          <div class="card-head" style="background:var(--gray-700);">📦 Repository & Utils</div>
+          <div class="card-body">
+            <ul>
+              <li>ChatRepository.ets — 持久化</li>
+              <li>MarkdownParser.ets — MD 渲染</li>
+              <li>AiConstants.ets — 常量配置</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== 4: DATA FLOW ====== -->
+  <div class="section">
+    <div class="section-header">
+      <div class="icon" style="background:#FEF3C7;">🔄</div>
+      <h2>四、数据流设计</h2>
+    </div>
+    <div class="section-body">
+      <!-- Main flow -->
+      <div class="dataflow" style="margin-bottom:20px;">
+        <div class="df-node df-source">📊 数据源<br><span class="text-xs">考试成绩<br>错题记录<br>课程进度</span></div>
+        <span class="df-arrow">→</span>
+        <div class="df-node df-collect">📥 DataCollect<br>Service</div>
+        <span class="df-arrow">→</span>
+        <div class="df-node df-ai">🤖 AiService<br><span class="text-xs">System Prompt<br>+ 学习上下文<br>+ 用户问题</span></div>
+        <span class="df-arrow">→</span>
+        <div class="df-node" style="background:#F3E8FF;color:#6B21A8;">☁️ AI 后端<br><span class="text-xs">LLM 推理<br>流式返回</span></div>
+        <span class="df-arrow">→</span>
+        <div class="df-node df-ai">📤 SSE 解析<br><span class="text-xs">逐 token 更新</span></div>
+        <span class="df-arrow">→</span>
+        <div class="df-node df-ui">📱 UI 渲染<br><span class="text-xs">消息气泡<br>分析卡片</span></div>
+      </div>
+
+      <!-- Detailed description -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:16px;">
+        <div style="padding:14px;background:#DBEAFE;border-radius:8px;">
+          <div style="font-weight:700;font-size:13px;color:#1E40AF;margin-bottom:4px;">① 数据采集</div>
+          <div style="font-size:11px;color:#1E3A5F;">DataCollectService 从 AppStorage、MineOnlineTestModel、MineErrorModel、TrainInfoModel 中读取用户学习数据</div>
+        </div>
+        <div style="padding:14px;background:#D1FAE5;border-radius:8px;">
+          <div style="font-weight:700;font-size:13px;color:#065F46;margin-bottom:4px;">② 上下文构建</div>
+          <div style="font-size:11px;color:#064E3B;">将学习数据 + System Prompt + 用户消息组装为 Chat Messages，通过 HTTPS 发送给 AI 后端</div>
+        </div>
+        <div style="padding:14px;background:#FEF3C7;border-radius:8px;">
+          <div style="font-weight:700;font-size:13px;color:#92400E;margin-bottom:4px;">③ 流式响应</div>
+          <div style="font-size:11px;color:#78350F;">AI 后端通过 SSE（Server-Sent Events）逐 token 返回，前端实时更新消息气泡内容</div>
+        </div>
+        <div style="padding:14px;background:#FEE2E2;border-radius:8px;">
+          <div style="font-weight:700;font-size:13px;color:#991B1B;margin-bottom:4px;">④ 本地缓存</div>
+          <div style="font-size:11px;color:#7F1D1D;">对话记录通过 ChatRepository 持久化到本地，支持离线查看历史对话</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== 5: NAVIGATION ROUTES ====== -->
+  <div class="section">
+    <div class="section-header">
+      <div class="icon" style="background:#E8F0FE;">🔗</div>
+      <h2>五、导航路由设计</h2>
+    </div>
+    <div class="section-body">
+      <div class="route-map">
+        <div class="route-node root">EntryAbility → pages/Index (Tabs + Navigation)</div>
+        <div class="route-line"></div>
+        <div style="font-size:11px;color:var(--gray-500);">NavPathStack (AppStorage)</div>
+        <div class="route-line"></div>
+        <div class="route-branch">
+          <div class="route-node">HomeView<br><span class="text-xs">→ JumpPage, SecondPage</span></div>
+          <div class="route-node">TrainPage<br><span class="text-xs">→ CourseDetail, TrainDetail, ExamDetail</span></div>
+          <div class="route-node new">🤖 AiChatView<br><span class="text-xs">→ HistoryPage (新建)</span></div>
+          <div class="route-node">OnlineIndexView<br><span class="text-xs">← 在线帮助</span></div>
+          <div class="route-node">MinePage<br><span class="text-xs">→ Course, Exam, Error, Set, Train</span></div>
+        </div>
+      </div>
+
+      <div class="mt-16 text-center text-sm text-gray">
+        AiChatView 作为 NavDestination 注册到 pathStack，支持从其他页面通过 pushPathByName 跳转。<br>
+        例如：首页学习报告卡片点击后跳转至 AI 助教并自动发起分析请求。
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== 6: UI WIREFRAME ====== -->
+  <div class="section">
+    <div class="section-header">
+      <div class="icon" style="background:#F3E8FF;">🎨</div>
+      <h2>六、AI 助教页面线框图</h2>
+    </div>
+    <div class="section-body">
+      <div style="display:flex;gap:24px;justify-content:center;flex-wrap:wrap;align-items:flex-start;">
+        <!-- Screen 1: Welcome -->
+        <div style="width:220px;">
+          <div style="font-size:12px;font-weight:600;text-align:center;margin-bottom:8px;color:var(--gray-600);">场景一：首次进入（欢迎页）</div>
+          <div style="border:1px solid var(--gray-300);border-radius:16px;overflow:hidden;background:white;">
+            <div style="height:28px;background:var(--gray-50);display:flex;align-items:center;padding:0 10px;gap:8px;">
+              <span style="font-size:9px;">✏️</span>
+              <span style="font-size:10px;font-weight:600;flex:1;text-align:center;">AI 助教</span>
+              <span style="font-size:9px;">🕐</span>
+            </div>
+            <div style="height:260px;background:#FAFBFC;padding:16px 12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;">
+              <div style="font-size:32px;">🤖</div>
+              <div style="font-size:12px;font-weight:600;color:var(--gray-700);text-align:center;">你好！我是你的<br>AI 学习助教</div>
+              <div style="font-size:10px;color:var(--gray-500);text-align:center;">我可以分析你的学习成绩、<br>解答问题、制定学习计划</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;">
+                <div style="padding:4px 10px;background:var(--primary-light);border-radius:12px;font-size:9px;color:var(--primary);">📊 学习分析</div>
+                <div style="padding:4px 10px;background:var(--primary-light);border-radius:12px;font-size:9px;color:var(--primary);">📝 解答问题</div>
+                <div style="padding:4px 10px;background:var(--primary-light);border-radius:12px;font-size:9px;color:var(--primary);">📅 学习计划</div>
+              </div>
+            </div>
+            <div style="height:36px;display:flex;align-items:center;padding:0 8px;gap:6px;border-top:1px solid var(--gray-200);">
+              <input placeholder="输入你的问题..." style="flex:1;border:none;font-size:10px;outline:none;background:transparent;" disabled>
+              <span style="font-size:14px;color:var(--gray-400);">📤</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Screen 2: Analysis -->
+        <div style="width:220px;">
+          <div style="font-size:12px;font-weight:600;text-align:center;margin-bottom:8px;color:var(--gray-600);">场景二：学习分析报告</div>
+          <div style="border:1px solid var(--gray-300);border-radius:16px;overflow:hidden;background:white;">
+            <div style="height:28px;background:var(--gray-50);display:flex;align-items:center;padding:0 10px;gap:8px;">
+              <span style="font-size:9px;">✏️</span>
+              <span style="font-size:10px;font-weight:600;flex:1;text-align:center;">AI 助教</span>
+              <span style="font-size:9px;">🕐</span>
+            </div>
+            <div style="height:260px;background:#FAFBFC;padding:8px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;">
+              <div style="align-self:flex-start;max-width:85%;padding:6px 10px;background:white;border:1px solid var(--gray-200);border-radius:12px;font-size:9px;">
+                帮我分析一下我的学习情况
+              </div>
+              <div style="align-self:flex-end;max-width:85%;padding:6px 10px;background:var(--primary);color:white;border-radius:12px;font-size:9px;">
+                好的，正在分析...
+              </div>
+              <div style="background:white;border:1px solid var(--primary-light);border-radius:10px;padding:8px;font-size:9px;">
+                <div style="font-weight:600;color:var(--primary);margin-bottom:4px;">📊 学习分析报告</div>
+                <div>考试成绩：78分 (↑5)</div>
+                <div>课程进度：62% (3/5门)</div>
+                <div style="color:#EF4444;">⚠ 薄弱：计算机网络 45%</div>
+                <div style="margin-top:4px;padding:4px 6px;background:var(--primary-light);border-radius:6px;color:var(--primary);">
+                  💡 建议：重点复习 TCP/IP 协议栈
+                </div>
+              </div>
+            </div>
+            <div style="height:36px;display:flex;align-items:center;padding:0 8px;gap:6px;border-top:1px solid var(--gray-200);">
+              <input placeholder="输入你的问题..." style="flex:1;border:none;font-size:10px;outline:none;background:transparent;" disabled>
+              <span style="font-size:14px;color:var(--primary);">📤</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Screen 3: Q&A -->
+        <div style="width:220px;">
+          <div style="font-size:12px;font-weight:600;text-align:center;margin-bottom:8px;color:var(--gray-600);">场景三：智能问答</div>
+          <div style="border:1px solid var(--gray-300);border-radius:16px;overflow:hidden;background:white;">
+            <div style="height:28px;background:var(--gray-50);display:flex;align-items:center;padding:0 10px;gap:8px;">
+              <span style="font-size:9px;">✏️</span>
+              <span style="font-size:10px;font-weight:600;flex:1;text-align:center;">AI 助教</span>
+              <span style="font-size:9px;">🕐</span>
+            </div>
+            <div style="height:260px;background:#FAFBFC;padding:8px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;">
+              <div style="align-self:flex-end;max-width:85%;padding:6px 10px;background:var(--primary);color:white;border-radius:12px;font-size:9px;">
+                什么是 TCP 三次握手？
+              </div>
+              <div style="align-self:flex-start;max-width:85%;padding:6px 10px;background:white;border:1px solid var(--gray-200);border-radius:12px;font-size:9px;">
+                TCP 三次握手是建立可靠连接的过程：
+                <br>1. 客户端发送 SYN
+                <br>2. 服务器回复 SYN-ACK
+                <br>3. 客户端发送 ACK
+                <br><br>这是为了保证双方收发能力正常...
+              </div>
+              <div style="align-self:flex-end;max-width:85%;padding:6px 10px;background:var(--primary);color:white;border-radius:12px;font-size:9px;">
+                能举个实际例子吗？
+              </div>
+              <div style="align-self:flex-start;max-width:85%;padding:6px 10px;background:white;border:1px solid var(--gray-200);border-radius:12px;font-size:9px;">
+                比如你访问一个网站时，浏览器会先和服务器完成三次握手，然后才开始传输网页数据 🔗
+              </div>
+            </div>
+            <div style="height:36px;display:flex;align-items:center;padding:0 8px;gap:6px;border-top:1px solid var(--gray-200);">
+              <input placeholder="输入你的问题..." style="flex:1;border:none;font-size:10px;outline:none;background:transparent;" disabled>
+              <span style="font-size:14px;color:var(--primary);">📤</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== 7: INTEGRATION CHECKLIST ====== -->
+  <div class="section">
+    <div class="section-header">
+      <div class="icon" style="background:#FEE2E2;">✅</div>
+      <h2>七、集成改造清单</h2>
+    </div>
+    <div class="section-body">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead>
+          <tr style="background:var(--gray-800);color:white;">
+            <th style="padding:8px 12px;text-align:left;">#</th>
+            <th style="padding:8px 12px;text-align:left;">改造项</th>
+            <th style="padding:8px 12px;text-align:left;">涉及文件</th>
+            <th style="padding:8px 12px;text-align:left;">说明</th>
+            <th style="padding:8px 12px;text-align:left;">类型</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid var(--gray-200);">
+            <td style="padding:7px 12px;">1</td>
+            <td style="padding:7px 12px;">新增 TabContent</td>
+            <td style="padding:7px 12px;"><code>entry/.../pages/Index.ets</code></td>
+            <td style="padding:7px 12px;">import AiChatView，在 Tabs 中新增第 3 个 TabContent</td>
+            <td><span class="badge badge-mod">修改</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--gray-200);">
+            <td style="padding:7px 12px;">2</td>
+            <td style="padding:7px 12px;">新增 Tab 图标</td>
+            <td style="padding:7px 12px;"><code>entry/.../pages/Tab.ets</code></td>
+            <td style="padding:7px 12px;">tabInfo 数组新增 AI 助教项</td>
+            <td><span class="badge badge-mod">修改</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--gray-200);">
+            <td style="padding:7px 12px;">3</td>
+            <td style="padding:7px 12px;">新增 aiagent 模块</td>
+            <td style="padding:7px 12px;"><code>features/aiagent/</code></td>
+            <td style="padding:7px 12px;">完整模块创建，含 build-profile.json5、hvigorfile.ts 等</td>
+            <td><span class="badge badge-new">新增</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--gray-200);">
+            <td style="padding:7px 12px;">4</td>
+            <td style="padding:7px 12px;">注册模块</td>
+            <td style="padding:7px 12px;"><code>build-profile.json5</code></td>
+            <td style="padding:7px 12px;">products.targets 新增 aiagent</td>
+            <td><span class="badge badge-mod">修改</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--gray-200);">
+            <td style="padding:7px 12px;">5</td>
+            <td style="padding:7px 12px;">添加模块依赖</td>
+            <td style="padding:7px 12px;"><code>entry/oh-package.json5</code></td>
+            <td style="padding:7px 12px;">entry 模块添加 @safe/aiagent 依赖</td>
+            <td><span class="badge badge-mod">修改</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--gray-200);">
+            <td style="padding:7px 12px;">6</td>
+            <td style="padding:7px 12px;">数据接口导出</td>
+            <td style="padding:7px 12px;"><code>features/mine/Index.ets</code></td>
+            <td style="padding:7px 12px;">导出考试成绩、错题数据读取接口</td>
+            <td><span class="badge badge-mod">修改</span></td>
+          </tr>
+          <tr>
+            <td style="padding:7px 12px;">7</td>
+            <td style="padding:7px 12px;">图标资源</td>
+            <td style="padding:7px 12px;"><code>entry/src/main/resources/</code></td>
+            <td style="padding:7px 12px;">添加 AI 助教 Tab 图标（选中/未选中态）</td>
+            <td><span class="badge badge-new">新增</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ====== 8: KEY DESIGN DECISIONS ====== -->
+  <div class="section">
+    <div class="section-header">
+      <div class="icon" style="background:#E8F0FE;">💡</div>
+      <h2>八、关键设计决策</h2>
+    </div>
+    <div class="section-body">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;">
+        <div style="padding:14px;background:var(--gray-50);border-radius:8px;border-left:3px solid var(--primary);">
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px;">决策 1：Tab 位置</div>
+          <div style="font-size:11px;color:var(--gray-600);">
+            AI 助教插入在"培训"和"消息"之间（索引 2），位于五个 Tab 的中间位置，便于用户发现和访问。
+          </div>
+        </div>
+        <div style="padding:14px;background:var(--gray-50);border-radius:8px;border-left:3px solid var(--accent);">
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px;">决策 2：模块独立</div>
+          <div style="font-size:11px;color:var(--gray-600);">
+            作为独立的 features/aiagent 模块，遵循现有 Feature-based 架构规范，通过 @safe/aiagent 命名空间导入。
+          </div>
+        </div>
+        <div style="padding:14px;background:var(--gray-50);border-radius:8px;border-left:3px solid var(--warning);">
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px;">决策 3：SSE 流式响应</div>
+          <div style="font-size:11px;color:var(--gray-600);">
+            采用 SSE 实现逐 token 流式展示 AI 回复，提升用户感知的响应速度，避免长时间等待。
+          </div>
+        </div>
+        <div style="padding:14px;background:var(--gray-50);border-radius:8px;border-left:3px solid #A855F7;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px;">决策 4：数据采集方式</div>
+          <div style="font-size:11px;color:var(--gray-600);">
+            通过 DataCollectService 从 AppStorage 和各模块读取学习数据，避免直接耦合 mine/train 模块内部实现。
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="text-align:center;padding:24px;color:var(--gray-400);font-size:11px;">
+    Education_Framework_Code_V1 · AI 智能助教 · 架构设计图 · 2026-05-18
+  </div>
+
+</div>
+</body>
+</html>

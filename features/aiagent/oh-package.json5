@@ -1,0 +1,14 @@
+{
+  "name": "@safe/aiagent",
+  "version": "1.0.0",
+  "description": "AI intelligent teaching assistant module",
+  "main": "Index.ets",
+  "author": "",
+  "license": "Apache-2.0",
+  "packageType": "InterfaceHar",
+  "dependencies": {
+    "@safe/basic": "file:../../common/basic",
+    "@safe/mine": "file:../mine",
+    "@safe/train": "file:../train"
+  }
+}

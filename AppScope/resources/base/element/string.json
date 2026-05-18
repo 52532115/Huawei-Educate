@@ -1,0 +1,29 @@
+{
+  "string": [
+    {
+      "name": "app_name",
+      "value": "SafetAcademy"
+    },
+    {
+      "name": "string_desc",
+      "value": "行业模板准则"
+    },
+    {
+      "name": "string_nums",
+      "value": "4.5"
+    },
+    {
+      "name": "string_timer",
+      "value": "0.5"
+    },
+    {
+      "name": "agcit_huawei_Education",
+      "value": "1.0.0"
+    },
+    {
+      "name": "agcittype_huawei_Education",
+      "value": "industryTemplate"
+    }
+  ]
+}
+

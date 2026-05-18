@@ -1,0 +1,15 @@
+{
+  "module": {
+    "name": "Login",
+    "type": "har",
+    "routerMap": "$profile:route_map",
+    "deviceTypes": [
+      "default"
+    ],
+    requestPermissions: [
+      {
+        name: "ohos.permission.PRIVACY_WINDOW"
+      }
+    ]
+  }
+}

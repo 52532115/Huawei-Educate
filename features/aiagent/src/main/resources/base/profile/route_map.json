@@ -1,0 +1,9 @@
+{
+  "routerMap": [
+    {
+      "name": "AiChatView",
+      "pageSourceFile": "src/main/ets/components/AiChatView.ets",
+      "buildFunction": "AiChatViewBuilder"
+    }
+  ]
+}

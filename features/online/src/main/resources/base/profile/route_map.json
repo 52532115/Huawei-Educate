@@ -1,0 +1,9 @@
+{
+  "routerMap": [
+    {
+      "name": "OnlineIndex",
+      "pageSourceFile": "src/main/ets/views/OnlineIndexView.ets",
+      "buildFunction": "OnlineIndexBuilder"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "routerMap": [
+    {
+      "name": "HomeView",
+      "pageSourceFile": "src/main/ets/views/HomeView.ets",
+      "buildFunction": "HomeViewBuilder"
+    },
+    {
+      "name": "SecondView",
+      "pageSourceFile": "src/main/ets/views/SecondView.ets",
+      "buildFunction": "SecondViewBuilder"
+    },
+    {
+      "name": "JumpPage",
+      "pageSourceFile": "src/main/ets/secondary/JumpPage.ets",
+      "buildFunction": "JumpPageBuilder"
+    },
+    {
+      "name": "SecondPage",
+      "pageSourceFile": "src/main/ets/secondary/HomePage.ets",
+      "buildFunction": "SecondPageBuilder"
+    }
+  ]
+}

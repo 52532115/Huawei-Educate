@@ -1,0 +1,13 @@
+{
+  "modelVersion": "6.0.0",
+  "name": "safetacademy",
+  "version": "1.0.0",
+  "description": "Please describe the basic information.",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+  },
+  "devDependencies": {
+  }
+}

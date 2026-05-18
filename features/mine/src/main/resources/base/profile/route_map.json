@@ -1,0 +1,44 @@
+{
+  "routerMap": [
+    {
+      "name": "MineSetPage",
+      "pageSourceFile": "src/main/ets/views/MineSetPage.ets",
+      "buildFunction": "MineSetPageBuilder"
+    },
+    {
+      "name": "MineCoursePage",
+      "pageSourceFile": "src/main/ets/views/MineCoursePage.ets",
+      "buildFunction": "MineCoursePageBuilder"
+    },
+    {
+      "name": "MineOnlineTestPage",
+      "pageSourceFile": "src/main/ets/views/MineOnlineTestPage.ets",
+      "buildFunction": "MineOnlineTestPageBuilder"
+    },
+    {
+      "name": "MineErrorPage",
+      "pageSourceFile": "src/main/ets/views/MineErrorPage.ets",
+      "buildFunction": "MineErrorPageBuilder"
+    },
+    {
+      "name": "MineTrainPage",
+      "pageSourceFile": "src/main/ets/views/MineTrainPage.ets",
+      "buildFunction": "MineTrainPageBuilder"
+    },
+    {
+      "name": "MineModiPersonPage",
+      "pageSourceFile": "src/main/ets/views/MineModiPersonPage.ets",
+      "buildFunction": "MineModiPersonPageBuilder"
+    },
+    {
+      "name": "MineStartTestPage",
+      "pageSourceFile": "src/main/ets/views/MineStartTestPage.ets",
+      "buildFunction": "MineStartTestPageBuilder"
+    },
+    {
+      "name": "MineTestResPage",
+      "pageSourceFile": "src/main/ets/views/MineTestResPage.ets",
+      "buildFunction": "MineTestResPageBuilder"
+    }
+  ]
+}

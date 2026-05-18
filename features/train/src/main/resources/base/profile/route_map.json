@@ -1,0 +1,19 @@
+{
+  "routerMap": [
+    {
+      "name": "TrainDetailPage",
+      "pageSourceFile": "src/main/ets/pages/TrainDetailPage.ets",
+      "buildFunction": "TrainDetailPageBuilder"
+    },
+    {
+      "name": "ExaminationDetailPage",
+      "pageSourceFile": "src/main/ets/pages/ExaminationDetailPage.ets",
+      "buildFunction": "ExaminationDetailPageBuilder"
+    },
+    {
+      "name": "CourseDetailPage",
+      "pageSourceFile": "src/main/ets/pages/CourseDetailPage.ets",
+      "buildFunction": "CourseDetailPageBuilder"
+    }
+  ]
+}
