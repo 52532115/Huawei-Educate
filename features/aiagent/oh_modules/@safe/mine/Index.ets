@@ -29,6 +29,8 @@ export { MineSetPage } from './src/main/ets/views/MineSetPage';
 
 export { MineErrorPage } from './src/main/ets/views/MineErrorPage';
 
+export { MineAddErrorPage } from './src/main/ets/views/MineAddErrorPage';
+
 export { MineModiPersonPage } from './src/main/ets/views/MineModiPersonPage';
 
 export { MineTrainPage } from './src/main/ets/views/MineTrainPage';

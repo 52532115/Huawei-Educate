@@ -71,6 +71,58 @@
     {
       "name": "analysis",
       "value": "解析:"
+    },
+    {
+      "name": "mine_title_favorites",
+      "value": "收藏课程"
+    },
+    {
+      "name": "error_add_title",
+      "value": "添加错题"
+    },
+    {
+      "name": "error_question_title",
+      "value": "题目内容"
+    },
+    {
+      "name": "error_options",
+      "value": "选项列表"
+    },
+    {
+      "name": "error_correct_answer",
+      "value": "正确答案"
+    },
+    {
+      "name": "error_wrong_answer",
+      "value": "你的错误选项（选填）"
+    },
+    {
+      "name": "error_knowledge_tag",
+      "value": "知识点标签"
+    },
+    {
+      "name": "error_user_note",
+      "value": "学习笔记"
+    },
+    {
+      "name": "error_mistake_reason",
+      "value": "错误思路分析"
+    },
+    {
+      "name": "error_save",
+      "value": "保存错题"
+    },
+    {
+      "name": "error_ai_analysis",
+      "value": "AI 分析错题"
+    },
+    {
+      "name": "error_empty_hint",
+      "value": "暂无错题记录"
+    },
+    {
+      "name": "error_add_first",
+      "value": "添加第一道错题"
     }
   ]
 }

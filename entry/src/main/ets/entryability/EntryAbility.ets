@@ -49,6 +49,9 @@ export default class EntryAbility extends UIAbility {
         'Failed to set the window layout to full-screen mode. Cause:' + JSON.stringify(err));
     });
 
+    // Store filesDir for local data persistence (e.g., error book)
+    AppStorage.setOrCreate('filesDir', this.context.filesDir);
+
     let type = window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR;
     let avoidArea = windowClass.getWindowAvoidArea(type);
     let bottomRectHeight = avoidArea.bottomRect.height;

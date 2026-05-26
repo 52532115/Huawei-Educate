@@ -39,6 +39,16 @@
       "name": "MineTestResPage",
       "pageSourceFile": "src/main/ets/views/MineTestResPage.ets",
       "buildFunction": "MineTestResPageBuilder"
+    },
+    {
+      "name": "MineAddErrorPage",
+      "pageSourceFile": "src/main/ets/views/MineAddErrorPage.ets",
+      "buildFunction": "MineAddErrorPageBuilder"
+    },
+    {
+      "name": "MineFavoritePage",
+      "pageSourceFile": "src/main/ets/views/MineFavoritePage.ets",
+      "buildFunction": "MineFavoritePageBuilder"
     }
   ]
 }

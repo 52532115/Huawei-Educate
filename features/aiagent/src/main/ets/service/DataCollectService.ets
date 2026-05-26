@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+import fileIo from '@ohos.file.fs';
 import {
   LearningAnalysisData,
   LearningDataSnapshot,
@@ -78,23 +79,76 @@ export class DataCollectService {
   }
 
   private collectErrorQuestions(snapshot: LearningDataSnapshot): void {
-    const mockErrors: ErrorQuestionItem[] = [];
-    mockErrors.push(new ErrorQuestionItem('TCP/IP 协议栈结构', '计算机网络'));
-    mockErrors.push(new ErrorQuestionItem('二叉树的遍历算法', '数据结构'));
-    mockErrors.push(new ErrorQuestionItem('数据库范式设计', '数据库系统原理'));
-    mockErrors.push(new ErrorQuestionItem('操作系统进程调度', '操作系统'));
-    mockErrors.push(new ErrorQuestionItem('TCP 拥塞控制机制', '计算机网络'));
-    mockErrors.push(new ErrorQuestionItem('图的深度优先搜索', '数据结构'));
-    mockErrors.push(new ErrorQuestionItem('LL(1) 文法分析', '编译原理'));
-    mockErrors.push(new ErrorQuestionItem('红黑树的插入与删除', '数据结构'));
-    mockErrors.push(new ErrorQuestionItem('死锁检测与避免', '操作系统'));
-    mockErrors.push(new ErrorQuestionItem('关系代数与 SQL 优化', '数据库系统原理'));
-    mockErrors.push(new ErrorQuestionItem('梯度下降与反向传播', '机器学习'));
-    mockErrors.push(new ErrorQuestionItem('虚拟内存页面置换算法', '操作系统'));
+    const LABELS: string[] = ['A', 'B', 'C', 'D', 'E', 'F'];
 
-    for (const e of mockErrors) {
-      snapshot.errorQuestions.push(e);
+    // Try reading real error questions from AppStorage
+    let errorJson = AppStorage.get<string>('ErrorQuestions');
+
+    // If AppStorage is empty, try loading from persistent file
+    if (!errorJson || errorJson.length === 0) {
+      const filesDir = AppStorage.get<string>('filesDir');
+      if (filesDir) {
+        try {
+          errorJson = fileIo.readTextSync(filesDir + '/errorBook.json');
+        } catch (e) {
+          // File doesn't exist
+        }
+      }
     }
+
+    if (errorJson && errorJson.length > 0) {
+      try {
+        const parsed = JSON.parse(errorJson) as Array<Record<string, Object>>;
+        for (const eq of parsed) {
+          const title = (eq['title'] as string) || '';
+          const category = (eq['knowledgeTag'] as string) || '未分类';
+          const item = new ErrorQuestionItem(title, category);
+
+          // Read options
+          const options = eq['option'] as string[];
+          if (options) {
+            item.options = options;
+          }
+
+          // Read answer indices
+          const rightQues = eq['rightQues'] as number;
+          if (rightQues !== undefined && rightQues >= 0) {
+            item.correctIndex = rightQues;
+            item.correctLabel = rightQues < LABELS.length ? LABELS[rightQues] : String(rightQues);
+          }
+
+          const answer = eq['answer'] as number;
+          if (answer !== undefined && answer >= 0) {
+            item.userIndex = answer;
+            item.userLabel = answer < LABELS.length ? LABELS[answer] : String(answer);
+          }
+
+          // Read text fields
+          const note = eq['userNote'] as string;
+          if (note) {
+            item.userNote = note;
+          }
+          const reason = eq['mistakeReason'] as string;
+          if (reason) {
+            item.mistakeReason = reason;
+          }
+          const createTime = eq['createTime'] as number;
+          if (createTime) {
+            item.createTime = createTime;
+          }
+
+          snapshot.errorQuestions.push(item);
+        }
+        if (snapshot.errorQuestions.length > 0) {
+          return;
+        }
+      } catch (e) {
+        // Parse error — fall through
+      }
+    }
+
+    // No data available — push a placeholder so the UI shows an appropriate message
+    // The caller (requestErrorBookAnalysis) will handle the empty case
   }
 
   private collectCourseProgress(snapshot: LearningDataSnapshot): void {

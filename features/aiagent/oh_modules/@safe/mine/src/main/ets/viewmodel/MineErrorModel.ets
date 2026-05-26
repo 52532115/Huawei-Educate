@@ -15,14 +15,43 @@
  */
 
 export interface MineErrorModel {
+  id: string;
   title: string;
   option: string[];
   rightQues: number;
   answer?: number;
+  userNote: string;
+  mistakeReason: string;
+  knowledgeTag: string;
+  createTime: number;
+  analysis?: string;
   key: string;
 }
 
 export interface AnswerModel {
   key: string;
   value: number;
+}
+
+export function createErrorModel(
+  title: string,
+  option: string[],
+  rightQues: number,
+  answer: number | undefined,
+  userNote: string,
+  mistakeReason: string,
+  knowledgeTag: string,
+): MineErrorModel {
+  return {
+    id: `err_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+    title: title,
+    option: option,
+    rightQues: rightQues,
+    answer: answer,
+    userNote: userNote,
+    mistakeReason: mistakeReason,
+    knowledgeTag: knowledgeTag,
+    createTime: Date.now(),
+    key: '',
+  };
 }

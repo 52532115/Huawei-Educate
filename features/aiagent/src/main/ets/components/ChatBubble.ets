@@ -32,7 +32,14 @@ export struct ChatBubble {
             .margin({ bottom: 2 });
         }
 
-        if (this.message.status === MessageStatus.SENDING) {
+        if (this.message.content) {
+          Text(this.message.content)
+            .fontSize(14)
+            .fontColor(this.message.role === MessageRole.USER ? '#FFFFFF' : '#333333')
+            .lineHeight(22)
+            .textOverflow({ overflow: TextOverflow.None })
+            .maxLines(999);
+        } else if (this.message.status === MessageStatus.SENDING) {
           LoadingProgress()
             .width(20)
             .height(20)

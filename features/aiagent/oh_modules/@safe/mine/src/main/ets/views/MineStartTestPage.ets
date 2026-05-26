@@ -14,7 +14,7 @@
  */
 
 import { StyleConstants } from '@safe/basic';
-import { ERROR_MODELS } from '../viewmodel/MineLocalData';
+import { getErrorModels } from '../viewmodel/MineLocalData';
 import { AnswerModel, MineErrorModel } from '../viewmodel/MineErrorModel';
 import { LogoutDialog } from './LogoutDialog';
 
@@ -31,7 +31,7 @@ export struct MineStartTestPage {
   @StorageProp('Time') time: number = 0;
   @StorageProp('topRectHeight') topRectHeight: number = 0;
   @StorageProp('bottomRectHeight') bottomRectHeight: number = 0;
-  @State questionData: MineErrorModel[] = ERROR_MODELS;
+  @State questionData: MineErrorModel[] = getErrorModels();
   @State currentModel: MineErrorModel | undefined = undefined;
   textTimerController: TextTimerController = new TextTimerController();
   pathStack: NavPathStack = AppStorage.get('pathStack') as NavPathStack;
@@ -46,8 +46,8 @@ export struct MineStartTestPage {
             this.score += 10;
           }
         }
-        for (let i = 0; i < ERROR_MODELS.length; i++) {
-          ERROR_MODELS[i].answer = 0;
+        for (let i = 0; i < this.questionData.length; i++) {
+          this.questionData[i].answer = 0;
         }
         this.textTimerController.reset();
         AppStorage.setOrCreate('MyCount', 0);
@@ -71,7 +71,7 @@ export struct MineStartTestPage {
     } else {
       this.count = 30000;
     }
-    this.currentModel = ERROR_MODELS[this.currentIndex];
+    this.currentModel = this.questionData[this.currentIndex];
   }
 
   submit(force: Boolean): void {
@@ -83,20 +83,20 @@ export struct MineStartTestPage {
           this.score += 10;
         }
       }
-      for (let i = 0; i < ERROR_MODELS.length; i++) {
-        ERROR_MODELS[i].answer = 0;
+      for (let i = 0; i < this.questionData.length; i++) {
+        this.questionData[i].answer = 0;
       }
       this.textTimerController.reset();
       AppStorage.setOrCreate('MyCount', 0);
       AppStorage.setOrCreate('Score', this.score);
       AppStorage.setOrCreate('Time', EXAM_DURATION);
     } else {
-      if (this.currentIndex >= ERROR_MODELS.length - 1) {
+      if (this.currentIndex >= this.questionData.length - 1) {
         this.tjDialog.open();
         return;
       }
       this.currentIndex += 1;
-      this.currentModel = ERROR_MODELS[this.currentIndex];
+      this.currentModel = this.questionData[this.currentIndex];
     }
   }
 
@@ -203,7 +203,7 @@ export struct MineStartTestPage {
                 .onClick(() => {
                   if (this.currentIndex > 0) {
                     this.currentIndex -= 1;
-                    this.currentModel = ERROR_MODELS[this.currentIndex];
+                    this.currentModel = this.questionData[this.currentIndex];
                   }
                 })
                 .margin({
@@ -213,7 +213,7 @@ export struct MineStartTestPage {
 
               Text() {
                 Span('试题').fontColor('#666666').fontSize(14);
-                Span((this.currentIndex + 1).toString() + '/' + ERROR_MODELS.length.toString())
+                Span((this.currentIndex + 1).toString() + '/' + this.questionData.length.toString())
                   .fontColor('#333333')
                   .fontSize(14);
               }
@@ -221,7 +221,7 @@ export struct MineStartTestPage {
                 bottom: 16
               });
 
-              Button((this.currentIndex + 1) === ERROR_MODELS.length ? '交卷' : '下一题',
+              Button((this.currentIndex + 1) === this.questionData.length ? '交卷' : '下一题',
                 { buttonStyle: ButtonStyleMode.NORMAL })
                 .width(106)
                 .height(40)

@@ -50,6 +50,7 @@ export class ChatMessage {
   }
 }
 
+@Observed
 export class ChatSession {
   id: string;
   title: string;
@@ -118,6 +119,8 @@ export class AiApiRequest {
   model: string;
   messages: AiMessage[];
   stream: boolean;
+  temperature?: number;
+  max_tokens?: number;
 
   constructor(model: string, messages: AiMessage[], stream: boolean) {
     this.model = model;
@@ -163,10 +166,26 @@ export class ExamScoreItem {
 export class ErrorQuestionItem {
   title: string;
   category: string;
+  options: string[];
+  correctIndex: number;
+  userIndex: number;
+  correctLabel: string;
+  userLabel: string;
+  userNote: string;
+  mistakeReason: string;
+  createTime: number;
 
   constructor(title: string, category: string) {
     this.title = title;
     this.category = category;
+    this.options = [];
+    this.correctIndex = -1;
+    this.userIndex = -1;
+    this.correctLabel = '';
+    this.userLabel = '';
+    this.userNote = '';
+    this.mistakeReason = '';
+    this.createTime = 0;
   }
 }
 

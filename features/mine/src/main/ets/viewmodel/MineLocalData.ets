@@ -18,7 +18,160 @@ import { MineListModel } from './MineListModel';
 import { MineSetListModel } from './MineSetListModel';
 import { MineCourseListModel } from './MineCourseListModel';
 import { MineOnlineTestModel } from './MineOnlineTestModel';
-import { MineErrorModel } from './MineErrorModel';
+import { MineErrorModel, createErrorModel } from './MineErrorModel';
+import fileIo from '@ohos.file.fs';
+
+
+const ERROR_STORE_KEY = 'ErrorQuestions';
+const ERROR_BOOK_FILE = '/errorBook.json';
+
+function getErrorBookFilePath(): string | null {
+  const filesDir = AppStorage.get<string>('filesDir');
+  if (!filesDir) {
+    return null;
+  }
+  return filesDir + ERROR_BOOK_FILE;
+}
+
+function persistErrorModels(models: MineErrorModel[]): void {
+  try {
+    const filePath = getErrorBookFilePath();
+    if (!filePath) {
+      return;
+    }
+    const file: fileIo.File = fileIo.openSync(filePath, 0o2 | 0o100 | 0o1000);
+    fileIo.writeSync(file.fd, JSON.stringify(models));
+    fileIo.closeSync(file);
+  } catch (e) {
+    console.error('persistErrorModels failed: ' + JSON.stringify(e));
+  }
+}
+
+function loadErrorModelsFromFile(): MineErrorModel[] | null {
+  try {
+    const filePath = getErrorBookFilePath();
+    if (!filePath) {
+      return null;
+    }
+    const text = fileIo.readTextSync(filePath);
+    if (text && text.length > 0) {
+      const parsed: MineErrorModel[] = JSON.parse(text) as MineErrorModel[];
+      return parsed;
+    }
+  } catch (e) {
+    // File doesn't exist or parse error
+  }
+  return null;
+}
+
+export function getErrorModels(): MineErrorModel[] {
+  // First check AppStorage cache
+  try {
+    const stored = AppStorage.get<string>(ERROR_STORE_KEY);
+    if (stored && stored.length > 0) {
+      const parsed: MineErrorModel[] = JSON.parse(stored) as MineErrorModel[];
+      return parsed;
+    }
+  } catch (e) {
+    // fall through
+  }
+
+  // Try loading from persistent file
+  const fromFile = loadErrorModelsFromFile();
+  if (fromFile && fromFile.length > 0) {
+    AppStorage.setOrCreate(ERROR_STORE_KEY, JSON.stringify(fromFile));
+    return fromFile;
+  }
+
+  // Fallback to defaults — cache in AppStorage so IDs stay consistent
+  const result: MineErrorModel[] = [];
+  for (let i = 0; i < DEFAULT_ERROR_MODELS.length; i++) {
+    const m = DEFAULT_ERROR_MODELS[i];
+    const copy: MineErrorModel = {
+      id: `err_default_${Date.now()}_${i}`,
+      title: m.title,
+      option: m.option,
+      rightQues: m.rightQues,
+      answer: m.answer,
+      userNote: m.userNote,
+      mistakeReason: m.mistakeReason,
+      knowledgeTag: m.knowledgeTag,
+      createTime: m.createTime,
+      key: m.key,
+    };
+    result.push(copy);
+  }
+  AppStorage.setOrCreate(ERROR_STORE_KEY, JSON.stringify(result));
+  return result;
+}
+
+export function saveErrorModels(models: MineErrorModel[]): void {
+  const json = JSON.stringify(models);
+  AppStorage.setOrCreate(ERROR_STORE_KEY, json);
+  persistErrorModels(models);
+}
+
+export function addErrorModel(model: MineErrorModel): void {
+  const models = getErrorModels();
+  models.unshift(model);
+  saveErrorModels(models);
+}
+
+export function deleteErrorModel(id: string): void {
+  let models = getErrorModels();
+  models = models.filter((m) => m.id !== id);
+  saveErrorModels(models);
+}
+
+export function updateErrorModel(updated: MineErrorModel): void {
+  const models = getErrorModels();
+  const index = models.findIndex((m) => m.id === updated.id);
+  if (index !== -1) {
+    models[index] = updated;
+    saveErrorModels(models);
+  }
+}
+
+const DEFAULT_ERROR_MODELS: MineErrorModel[] = [
+  createErrorModel(
+    '极限 lim(x→0) sin(3x)/x 的值为？',
+    ['0', '1', '3', '不存在'],
+    2, 1, '等价无穷小替换：sin(3x)~3x，原式=lim(3x/x)=3',
+    '误以为 sin(x)~x 对所有含参形式都直接替换为1，忽略了系数',
+    '函数与极限'
+  ),
+  createErrorModel(
+    '函数 f(x)=x³-3x 在区间[-2,2]上的最大值是？',
+    ['-2', '0', '2', '6'],
+    3, 1,
+    'f\'(x)=3x²-3=3(x+1)(x-1)，驻点x=±1。f(-2)=-2, f(-1)=2, f(1)=-2, f(2)=2，最大值2',
+    '只计算了驻点，忘记检查区间端点函数值',
+    '导数与微分'
+  ),
+  createErrorModel(
+    '不定积分 ∫(3x²+e^x)dx 的结果是？',
+    ['x³+e^x+C', 'x³+e^x', '3x³+e^x+C', 'x³+e^x/x+C'],
+    0, 2, '∫3x²dx=x³，∫e^xdx=e^x，加上积分常数C',
+    '漏写积分常数C，不定积分必须加常数',
+    '不定积分'
+  ),
+  createErrorModel(
+    '定积分 ∫₀¹ (2x+1)dx 的值为？',
+    ['1', '1.5', '2', '3'],
+    2, 0,
+    '原式=[x²+x]₀¹=(1+1)-(0+0)=2',
+    '计算原函数时忘记常数项1的积分为x，误写成∫1dx=0',
+    '定积分'
+  ),
+  createErrorModel(
+    '判断级数 ∑(n=1→∞) 1/(n²+n) 的敛散性',
+    ['发散', '条件收敛', '绝对收敛', '无法判断'],
+    2, 3,
+    '1/(n²+n)<1/n²，∑1/n²收敛(p=2>1)，由比较判别法知原级数绝对收敛',
+    '误将分母 n²+n 当作 n 的一次方，用调和级数判断导致错误',
+    '无穷级数'
+  ),
+];
 
 const setListModels: MineSetListModel[][] = [
   [
@@ -358,78 +511,6 @@ const testList: MineOnlineTestModel[] = [
   ),
 ];
 
-export const ERROR_MODELS: MineErrorModel[] = [
-  {
-    title: '行业模板规范可以从官网获取',
-    option: ['对', '错'],
-    rightQues: 0,
-    answer: undefined,
-    key: '1'
-  },
-  {
-    title: '行业模板规范可以从官网获取',
-    option: ['对', '错'],
-    rightQues: 0,
-    answer: undefined,
-    key: '2'
-  },
-  {
-    title: '行业模板规范可以从官网获取',
-    option: ['对', '错'],
-    rightQues: 0,
-    answer: undefined,
-    key: '3'
-  },
-  {
-    title: '行业模板规范可以从官网获取',
-    option: ['对', '错'],
-    rightQues: 0,
-    answer: undefined,
-    key: '4'
-  },
-  {
-    title: '行业模板规范可以从官网获取',
-    option: ['对', '错'],
-    rightQues: 0,
-    answer: undefined,
-    key: '5'
-  },
-  {
-    title: '行业模板规范可以从官网获取',
-    option: ['对', '错'],
-    rightQues: 0,
-    answer: undefined,
-    key: '6'
-  },
-  {
-    title: '行业模板规范可以从官网获取',
-    option: ['对', '错'],
-    rightQues: 0,
-    answer: undefined,
-    key: '7'
-  },
-  {
-    title: '行业模板规范可以从官网获取',
-    option: ['对', '错'],
-    rightQues: 0,
-    answer: undefined,
-    key: '8'
-  },
-  {
-    title: '行业模板规范可以从官网获取',
-    option: ['对', '错'],
-    rightQues: 0,
-    answer: undefined,
-    key: '9'
-  },
-  {
-    title: '行业模板规范可以从官网获取',
-    option: ['对', '错'],
-    rightQues: 0,
-    answer: undefined,
-    key: '10'
-  }
-];
 
 
 export { listModel, setListModels, courseList, TrainInfo, trainList, testList };
