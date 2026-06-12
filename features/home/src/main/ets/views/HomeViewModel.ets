@@ -34,13 +34,13 @@ export class BusinessInfo {
 class HomeViewModel {
   getMainBusiness(): BusinessInfo[] {
     let mainBusinessList: BusinessInfo[] = [
-      new BusinessInfo($r('app.media.icon1'), $r('app.string.home_account'), $r('app.media.ic_fund_investment'), '',
+      new BusinessInfo($r('app.media.icon_1'), $r('app.string.home_study_record'), $r('app.media.ic_home_notes'), '',
         '#409eff'),
-      new BusinessInfo($r('app.media.icon2'), $r('app.string.home_details'), $r('app.media.ic_precious_metals'), '',
+      new BusinessInfo($r('app.media.icon_2'), $r('app.string.home_error_book'), $r('app.media.ic_home_cards'), '',
         '#67c23a'),
-      new BusinessInfo($r('app.media.icon1'), $r('app.string.home_transfers'), $r('app.media.ic_wealth_products'), '',
+      new BusinessInfo($r('app.media.icon_3'), $r('app.string.home_exam_center'), $r('app.media.ic_fund_investment'), '',
         '#e6a23c'),
-      new BusinessInfo($r('app.media.icon2'), $r('app.string.home_loans'), $r('app.media.ic_home_more'), '', '#f56c6c')
+      new BusinessInfo($r('app.media.icon_4'), $r('app.string.home_favorites'), $r('app.media.ic_home_icon'), '', '#f56c6c')
     ];
     return mainBusinessList;
   }

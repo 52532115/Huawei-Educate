@@ -17,10 +17,20 @@ export class OnlineListModel {
   name: string;
   timer: string = '';
   key: string = '';
+  type: string = '';
 
-  constructor(name: string, key: string, timer: string) {
+  constructor(name: string, key: string, timer: string, type: string) {
     this.name = name;
     this.key = key;
     this.timer = timer;
+    this.type = type;
+  }
+}
+
+export class OnlineDetailParam {
+  type: string = '';
+
+  constructor(type: string) {
+    this.type = type;
   }
 }

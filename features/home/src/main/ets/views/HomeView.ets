@@ -123,11 +123,14 @@ export struct HomeView {
           .width(this.getUIContext().px2vp(73 * 3.5))
           .height(this.getUIContext().px2vp(66 * 3.5))
           .onClick(() => {
-            if (index === 3) {
-              //注册
-              this.pathStack.pushPathByName('RegisterView', null);
-            } else {
-              this.pathStack.pushPathByName('SecondPage', null);
+            if (index === 0) {
+              this.pathStack.pushPathByName('MineCoursePage', null);
+            } else if (index === 1) {
+              this.pathStack.pushPathByName('MineErrorPage', null);
+            } else if (index === 2) {
+              this.pathStack.pushPathByName('MineOnlineTestPage', null);
+            } else if (index === 3) {
+              this.pathStack.pushPathByName('MineFavoritePage', null);
             }
           });
         } else {
@@ -149,8 +152,15 @@ export struct HomeView {
           .borderRadius($r('app.float.business_row_radius'))
           .backgroundColor($r('app.color.business_background'))
           .onClick(() => {
-            let pathInfo: NavPathInfo = new NavPathInfo('IconPage', '');
-            this.pathStack.pushDestination(pathInfo, true);
+            if (index === 0) {
+              this.pathStack.pushPathByName('MineCoursePage', null);
+            } else if (index === 1) {
+              this.pathStack.pushPathByName('MineErrorPage', null);
+            } else if (index === 2) {
+              this.pathStack.pushPathByName('MineOnlineTestPage', null);
+            } else if (index === 3) {
+              this.pathStack.pushPathByName('MineFavoritePage', null);
+            }
           });
         }
       }, (item: BusinessInfo, index: number) => index + JSON.stringify(item));

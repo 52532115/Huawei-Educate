@@ -17,88 +17,21 @@ import { OnlineListModel } from './OnlineListModel';
 
 export const onlineList: OnlineListModel[] = [
   new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
+    '您有一条未读消息',
     '1',
-    '2024-05-20'
+    '2024-05-20',
+    'checkin'
   ),
   new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
+    '您有一条未读消息',
     '2',
-    '2024-05-20'
+    '2024-05-20',
+    'exam'
   ),
   new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
+    '您有一条未读消息',
     '3',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '1',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '4',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '5',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '6',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '7',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '8',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '9',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '10',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '11',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '12',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '13',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '14',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '15',
-    '2024-05-20'
-  ),
-  new OnlineListModel(
-    '您有一条行业模板消息，请准备查收',
-    '16',
-    '2024-05-20'
+    '2024-05-20',
+    'grade'
   ),
 ];

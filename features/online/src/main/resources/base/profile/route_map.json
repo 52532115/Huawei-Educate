@@ -4,6 +4,11 @@
       "name": "OnlineIndex",
       "pageSourceFile": "src/main/ets/views/OnlineIndexView.ets",
       "buildFunction": "OnlineIndexBuilder"
+    },
+    {
+      "name": "OnlineDetail",
+      "pageSourceFile": "src/main/ets/views/OnlineDetailView.ets",
+      "buildFunction": "OnlineDetailBuilder"
     }
   ]
 }

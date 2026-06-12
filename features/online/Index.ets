@@ -16,3 +16,5 @@
 export { add } from './src/main/ets/utils/Calc';
 
 export { OnlineIndex as OnlineIndexView } from './src/main/ets/views/OnlineIndexView';
+
+export { OnlineDetail } from './src/main/ets/views/OnlineDetailView';

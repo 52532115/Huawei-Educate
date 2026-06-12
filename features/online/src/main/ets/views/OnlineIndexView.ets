@@ -14,7 +14,7 @@
  */
 
 import { ResManager, StyleConstants } from '@safe/basic';
-import { OnlineListModel } from '../viewmodel/OnlineListModel';
+import { OnlineDetailParam, OnlineListModel } from '../viewmodel/OnlineListModel';
 import { onlineList } from '../viewmodel/OnlineLocalData';
 
 @Component
@@ -50,7 +50,10 @@ export struct OnlineIndex {
       ForEach(onlineList, (item: OnlineListModel) => {
         ListItem() {
           this.MineListItem(item);
-        };
+        }
+        .onClick(() => {
+          this.pathStack.pushPathByName('OnlineDetail', new OnlineDetailParam(item.type));
+        });
       }, (item: OnlineListModel) => item.key);
     }
     .scrollBar(BarState.Off)
@@ -73,7 +76,7 @@ export struct OnlineIndex {
                 this.pathStack.pop();
               });
           }
-          Text('在线帮助')
+          Text('学习通知')
             .layoutWeight(1)
             .textAlign(TextAlign.Center)
             .margin({
@@ -99,7 +102,7 @@ export struct OnlineIndex {
       //判断是否展示返回按钮
       if (ctx?.pathInfo?.param) {
         let param = ctx?.pathInfo?.param;
-        if (param === '在线帮助') {
+        if (param === '学习通知') {
           this.isBackShow = true;
         }
       }
