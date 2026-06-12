@@ -17,7 +17,7 @@ import { TrainPage } from '@safe/train';
 import { MinePage } from '@safe/mine';
 import { OnlineIndexView } from '@safe/online';
 import { HomeView } from '@safe/home';
-import { AiChatView } from '@safe/aiagent';
+import { AiChatView, History } from '@safe/aiagent';
 import { CustomTabBar } from './Tab';
 
 @Entry
@@ -75,7 +75,15 @@ struct Index {
       }
       .backgroundColor('#F1F3F5');
     }
+    .navDestination(this.mapNavDestination)
     .hideTitleBar(true)
     .hideToolBar(true);
+  }
+
+  @Builder
+  mapNavDestination(name: string) {
+    if (name === 'History') {
+      History();
+    }
   }
 }

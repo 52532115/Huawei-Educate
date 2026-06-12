@@ -4,6 +4,11 @@
       "name": "AiChatView",
       "pageSourceFile": "src/main/ets/components/AiChatView.ets",
       "buildFunction": "AiChatViewBuilder"
+    },
+    {
+      "name": "History",
+      "pageSourceFile": "src/main/ets/components/History.ets",
+      "buildFunction": "HistoryBuilder"
     }
   ]
 }
