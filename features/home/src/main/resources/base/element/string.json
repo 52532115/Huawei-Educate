@@ -25,20 +25,20 @@
       "value": "搜索..."
     },
     {
-      "name": "home_study_record",
-      "value": "学习记录"
+      "name": "home_account",
+      "value": "行业模板"
     },
     {
-      "name": "home_error_book",
-      "value": "错题本"
+      "name": "home_details",
+      "value": "基础模板"
     },
     {
-      "name": "home_exam_center",
-      "value": "考试中心"
+      "name": "home_transfers",
+      "value": "通用模板"
     },
     {
-      "name": "home_favorites",
-      "value": "收藏课程"
+      "name": "home_loans",
+      "value": "注册模板"
     },
     {
       "name": "home_fund_investment",

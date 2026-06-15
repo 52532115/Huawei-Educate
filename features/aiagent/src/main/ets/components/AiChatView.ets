@@ -1,454 +1,255 @@
-import { http } from '@kit.NetworkKit';
-import { photoAccessHelper } from '@kit.MediaLibraryKit';
-import { fileIo as fs } from '@kit.CoreFileKit';
-import { BusinessError } from '@kit.BasicServicesKit';
-import { common } from '@kit.AbilityKit';
-import { promptAction } from '@kit.ArkUI';
-import util from '@ohos.util';
+/*
+ * Copyright (c) 2025 Huawei Device Co., Ltd.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-interface ApiResponse {
-  code: number;
-  data: AnswerData;
-  msg: string;
-}
-
-interface AnswerData {
-  answer: string;
-}
-
-interface TestResponse {
-  message: string;
-}
+import { StyleConstants } from '@safe/basic';
+import { ChatViewModel } from '../viewmodel/ChatViewModel';
+import { AnalysisViewModel } from '../viewmodel/AnalysisViewModel';
+import { ChatMessage, MessageRole, MessageStatus, LearningAnalysisData } from '../viewmodel/ChatModels';
+import { ChatBubble } from './ChatBubble';
+import { AnalysisCard } from './AnalysisCard';
+import { RecommendQuestions } from './RecommendQuestions';
+import { AiConstants } from '../utils/AiConstants';
 
 @Component
 export struct AiChatView {
-  @State questionText: string = ''
-  @State selectedImageUri: string = ''
-  @State aiAnswer: string = ''
-  @State isLoading: boolean = false
-  @State imageFd: number = -1
+  @StorageProp('topRectHeight') topRectHeight: number = 0;
+  @StorageProp('bottomRectHeight') bottomRectHeight: number = 0;
+  @StorageProp('triggerErrorAnalysis') @Watch('onTriggerErrorAnalysis') triggerErrorAnalysis: boolean = false;
+  @State inputText: string = '';
+  @State showRecommend: boolean = true;
+  @State messages: ChatMessage[] = [];
+  @State isSending: boolean = false;
+  @State isReceiving: boolean = false;
+  @State sessionCount: number = 1;
+  private chatVM: ChatViewModel = new ChatViewModel();
+  private analysisVM: AnalysisViewModel = new AnalysisViewModel();
+  scroller: Scroller = new Scroller();
+  pathStack: NavPathStack = AppStorage.get('pathStack') as NavPathStack;
+
+  aboutToAppear(): void {
+    this.analysisVM.loadAnalysisData();
+    this.syncState();
+    this.chatVM.setStateChangeCallback(() => {
+      this.syncState();
+    });
+    this.checkTriggerErrorAnalysis();
+  }
+
+  private syncState(): void {
+    this.messages = [...this.chatVM.currentSession.messages];
+    this.isSending = this.chatVM.isLoading;
+    this.isReceiving = this.chatVM.isStreaming;
+    this.sessionCount = this.chatVM.sessionList.length;
+  }
+
+  onTriggerErrorAnalysis(): void {
+    this.checkTriggerErrorAnalysis();
+  }
+
+  private checkTriggerErrorAnalysis(): void {
+    if (this.triggerErrorAnalysis) {
+      AppStorage.setOrCreate('triggerErrorAnalysis', false);
+      this.showRecommend = false;
+      this.chatVM.requestErrorBookAnalysis();
+    }
+  }
 
   build() {
-    Column() {
-      Row() {
-        Text('🔍')
-          .fontSize(24)
-          .margin({ right: 8 })
-        Text('AI 搜题')
-          .fontSize(24)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#1A1A1A')
-        Text('Pro')
-          .fontSize(12)
-          .fontColor('#007DFF')
-          .fontWeight(FontWeight.Medium)
-          .margin({ left: 4, top: 2 })
-          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          .backgroundColor('#E6F4FF')
-          .borderRadius(4)
-        Blank()
-        Button() {
-          Text('📋')
-            .fontSize(22)
+    NavDestination() {
+      Column() {
+        // --- Header ---
+        Row() {
+          Button('📋')
+            .fontSize(18)
+            .backgroundColor(Color.Transparent)
+            .onClick(() => {
+              this.chatVM.newSession();
+              this.showRecommend = true;
+            });
+
+          Text('AI 助教')
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#1F2937')
+            .layoutWeight(1)
+            .textAlign(TextAlign.Center);
+
+          Text(`${this.sessionCount}`)
+            .fontSize(10)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#1A56DB')
+            .borderRadius(10)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .visibility(this.sessionCount > 1 ? Visibility.Visible : Visibility.Hidden);
         }
-        .width(44)
-        .height(44)
-        .backgroundColor('#E6F4FF')
-        .borderRadius(22)
-        .onClick(() => {
-          let pathStack = AppStorage.get<NavPathStack>('pathStack');
-          if (pathStack) {
-            pathStack.pushPath({ name: 'History' });
-          }
-        })
-      }
-      .width('100%')
-      .padding({ top: 20, bottom: 20, left: 20, right: 20 })
-      .backgroundColor(Color.White)
-      .shadow({ radius: 8, color: '#0A000000', offsetY: 4 })
+        .width(StyleConstants.FULL_WIDTH)
+        .height(48)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: { bottom: 0.5 }, color: '#E5E7EB' });
 
-      Scroll() {
-        Column({ space: 20 }) {
-          Column() {
-            Row() {
-              Text('📝')
-                .fontSize(20)
-                .margin({ right: 8 })
-              Text('题目输入')
-                .fontSize(16)
-                .fontWeight(FontWeight.Bold)
-                .fontColor('#1A1A1A')
+        // --- Message List / Welcome ---
+        Column() {
+          if (this.messages.length <= 1) {
+            // Welcome content
+            Column({ space: 16 }) {
+              Text('🤖').fontSize(48);
+              Text('你好！我是你的 AI 学习助教')
+                .fontSize(16).fontWeight(FontWeight.Medium).fontColor('#1F2937');
+              Text('我可以帮你分析学习成绩、解答问题、制定学习计划')
+                .fontSize(13).fontColor('#6B7280').textAlign(TextAlign.Center);
+
+              Row({ space: 12 }) {
+                this.ActionButton('📊 学习分析', '#1A56DB', () => {
+                  this.showRecommend = false;
+                  const data = this.analysisVM.analysisData;
+                  this.chatVM.requestAnalysis(data);
+                });
+                this.ActionButton('📝 错题分析', '#F56C6C', () => {
+                  this.showRecommend = false;
+                  this.chatVM.requestErrorBookAnalysis();
+                });
+                this.ActionButton('💡 学习建议', '#10B981', () => {
+                  this.showRecommend = false;
+                  this.chatVM.sendMessage('请根据我的学习情况给我一些学习建议', true);
+                });
+                this.ActionButton('📸 拍照搜题', '#8B5CF6', () => {
+                  this.pathStack.pushPathByName('PhotoSearchView', null);
+                });
+              };
             }
             .width('100%')
-            .margin({ bottom: 12 })
-
-            TextArea({ placeholder: '请输入题目内容，支持数学、物理、化学等多学科题目...', text: this.questionText })
-              .height(160)
-              .fontSize(16)
-              .fontColor('#333333')
-              .placeholderColor('#AAB0BF')
-              .onChange((value: string) => {
-                this.questionText = value
-              })
-              .backgroundColor('#F7F9FC')
-              .borderRadius(16)
-              .padding(16)
-
-            Row() {
-              Text('添加图片')
-                .fontSize(14)
-                .fontColor('#666666')
-                .fontWeight(FontWeight.Medium)
-              Blank()
-            }
-            .width('100%')
-            .margin({ top: 16, bottom: 12 })
-
-            Row({ space: 12 }) {
-              if (this.selectedImageUri) {
-                Stack({ alignContent: Alignment.TopEnd }) {
-                  Image(this.selectedImageUri)
-                    .width(120)
-                    .height(120)
-                    .borderRadius(12)
-                    .objectFit(ImageFit.Cover)
-
-                  Button() {
-                    Text('✕')
-                      .fontSize(14)
-                      .fontColor('#FFFFFF')
-                  }
-                  .width(28)
-                  .height(28)
-                  .backgroundColor('#FF4D4F')
-                  .borderRadius(14)
-                  .shadow({ radius: 4, color: '#1AFF4D4F', offsetY: 2 })
-                  .offset({ x: 8, y: -8 })
-                  .onClick(() => {
-                    this.selectedImageUri = ''
-                    this.imageFd = -1
-                  })
-                }
-              }
-
-              if (!this.selectedImageUri) {
-                Column() {
-                  Text('📷')
-                    .fontSize(36)
-                  Text('拍照搜题')
-                    .fontSize(14)
-                    .fontColor('#007DFF')
-                    .fontWeight(FontWeight.Medium)
-                    .margin({ top: 8 })
-                  Text('支持相册选择')
-                    .fontSize(12)
-                    .fontColor('#AAB0BF')
-                    .margin({ top: 2 })
-                }
-                .width(140)
-                .height(140)
-                .justifyContent(FlexAlign.Center)
-                .backgroundColor('#E6F4FF')
-                .borderRadius(16)
-                .border({ width: 2, color: '#007DFF', style: BorderStyle.Dashed })
-                .onClick(() => this.selectImage())
-              }
-
-              Column() {
-                Text('🖼️')
-                  .fontSize(36)
-                Text('选择相册')
-                  .fontSize(14)
-                  .fontColor('#909399')
-                  .fontWeight(FontWeight.Medium)
-                  .margin({ top: 8 })
-                Text('上传截图')
-                  .fontSize(12)
-                  .fontColor('#AAB0BF')
-                  .margin({ top: 2 })
-              }
-              .width(140)
-              .height(140)
-              .justifyContent(FlexAlign.Center)
-              .backgroundColor('#F7F9FC')
-              .borderRadius(16)
-              .onClick(() => this.selectImage())
-            }
-            .width('100%')
-            .justifyContent(FlexAlign.Start)
-          }
-          .width('92%')
-          .padding(20)
-          .backgroundColor(Color.White)
-          .borderRadius(20)
-          .margin({ top: 16 })
-          .shadow({ radius: 16, color: '#08000000', offsetY: 4 })
-
-          Column() {
-            Button() {
-              Row() {
-                if (this.isLoading) {
-                  LoadingProgress()
-                    .width(22)
-                    .height(22)
-                    .color(Color.White)
-                    .margin({ right: 10 })
-                } else {
-                  Text('⚡')
-                    .fontSize(22)
-                    .margin({ right: 10 })
-                }
-                Text(this.isLoading ? 'AI 正在分析...' : '智能搜索')
-                  .fontSize(18)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor(Color.White)
-              }
-            }
-            .width('100%')
-            .height(56)
-            .backgroundColor(this.isLoading ? '#A0AEC0' : '#007DFF')
-            .borderRadius(28)
-            .shadow({ radius: 12, color: this.isLoading ? '#00000000' : '#33007DFF', offsetY: 6 })
-            .enabled(!this.isLoading)
-            .onClick(() => this.startSearch())
-          }
-          .width('92%')
-          .margin({ top: 8 })
-
-          if (this.aiAnswer || this.isLoading) {
-            Column() {
-              Row() {
-                Column() {
-                  Text('✨')
-                    .fontSize(20)
-                }
-                .width(40)
-                .height(40)
-                .justifyContent(FlexAlign.Center)
-                .backgroundColor('#E6F4FF')
-                .borderRadius(20)
-                .margin({ right: 12 })
-
-                Column() {
-                  Text('AI 智能解析')
-                    .fontSize(16)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor('#1A1A1A')
-                  Text('由深度学习模型提供')
-                    .fontSize(12)
-                    .fontColor('#909399')
-                    .margin({ top: 2 })
-                }
-                .alignItems(HorizontalAlign.Start)
-
-                Blank()
-
-                if (!this.isLoading && this.aiAnswer) {
-                  Button() {
-                    Row() {
-                      Text('📋')
-                        .fontSize(14)
-                        .margin({ right: 4 })
-                      Text('复制')
-                        .fontSize(13)
-                        .fontColor('#007DFF')
+            .height('100%')
+            .justifyContent(FlexAlign.Center);
+          } else {
+            // Message list
+            Scroll(this.scroller) {
+              Column({ space: 0 }) {
+                ForEach(this.messages, (msg: ChatMessage, index: number) => {
+                  Column() {
+                    if (msg.role === MessageRole.ANALYSIS && msg.analysisData) {
+                      AnalysisCard({ analysisData: msg.analysisData });
                     }
-                  }
-                  .height(32)
-                  .backgroundColor('#E6F4FF')
-                  .borderRadius(16)
-                  .onClick(() => {
-                    promptAction.showToast({ message: '已复制到剪贴板' })
-                  })
-                }
-              }
-              .width('100%')
-              .margin({ bottom: 16 })
+                    if (msg.role === MessageRole.USER || msg.role === MessageRole.AI ||
+                        msg.role === MessageRole.ANALYSIS) {
+                      ChatBubble({ message: msg });
+                    }
+                    if (msg.role === MessageRole.ANALYSIS && msg.content) {
+                      Text('📋 以上为学习数据分析结果')
+                        .fontSize(11).fontColor('#9CA3AF')
+                        .textAlign(TextAlign.Center).width('100%').padding(4);
+                    }
+                  };
+                }, (msg: ChatMessage) => msg.id + '_' + msg.status + '_' + msg.content.length);
 
-              if (this.isLoading) {
-                Column() {
-                  Row({ space: 8 }) {
-                    Text('●')
-                      .fontSize(8)
-                      .fontColor('#007DFF')
-                    Text('●')
-                      .fontSize(8)
-                      .fontColor('#007DFF')
-                      .opacity(0.6)
-                    Text('●')
-                      .fontSize(8)
-                      .fontColor('#007DFF')
-                      .opacity(0.3)
+                if (this.isReceiving) {
+                  Row() {
+                    LoadingProgress().width(16).height(16).color('#1A56DB');
+                    Text('正在思考...').fontSize(12).fontColor('#9CA3AF').margin({ left: 8 });
                   }
-                  Text('正在调用 AI 模型...')
-                    .fontSize(14)
-                    .fontColor('#909399')
-                    .margin({ top: 12 })
+                  .width('100%').padding(12);
                 }
-                .width('100%')
-                .padding({ top: 30, bottom: 30 })
-                .alignItems(HorizontalAlign.Center)
-              } else {
-                Column() {
-                  Text(this.aiAnswer)
-                    .fontSize(15)
-                    .fontColor('#2D3748')
-                    .lineHeight(28)
-                    .width('100%')
-                    .copyOption(CopyOptions.InApp)
-                }
-                .width('100%')
-                .padding(16)
-                .backgroundColor('#F7F9FC')
-                .borderRadius(12)
               }
+              .width(StyleConstants.FULL_WIDTH);
             }
-            .width('92%')
-            .padding(20)
-            .backgroundColor(Color.White)
-            .borderRadius(20)
-            .margin({ top: 8, bottom: 40 })
-            .shadow({ radius: 16, color: '#08000000', offsetY: 4 })
+            .scrollBar(BarState.Off)
+            .scrollable(ScrollDirection.Vertical)
+            .edgeEffect(EdgeEffect.None)
+            .layoutWeight(1);
           }
         }
-        .width('100%')
-        .padding({ bottom: 20 })
+        .layoutWeight(1);
+
+        // --- Recommend Questions ---
+        if (this.showRecommend && this.messages.length <= 1) {
+          RecommendQuestions({
+            questions: this.chatVM.getRecommendQuestions(),
+            onQuestionClick: (question: string) => {
+              if (question.includes('错题本')) {
+                this.showRecommend = false;
+                this.chatVM.requestErrorBookAnalysis();
+              } else {
+                this.doSend(question);
+              }
+            },
+          });
+        }
+
+        // --- Input Area ---
+        Row({ space: 8 }) {
+          TextInput({ text: $$this.inputText, placeholder: '输入你的问题...' })
+            .placeholderColor('#9CA3AF')
+            .fontSize(14)
+            .backgroundColor('#F3F4F6')
+            .borderRadius(20)
+            .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+            .layoutWeight(1)
+            .maxLines(4)
+            .onSubmit(() => {
+              this.doSend(this.inputText);
+            });
+
+          Button() {
+            Text('发送').fontSize(12).fontColor('#FFFFFF');
+          }
+          .width(56)
+          .height(40)
+          .borderRadius(20)
+          .backgroundColor(this.inputText.trim().length > 0 ? '#1A56DB' : '#D1D5DB')
+          .enabled(this.inputText.trim().length > 0 && !this.isSending)
+          .onClick(() => {
+            this.doSend(this.inputText);
+          });
+        }
+        .width(StyleConstants.FULL_WIDTH)
+        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: { top: 0.5 }, color: '#E5E7EB' });
       }
-      .layoutWeight(1)
-      .scrollBar(BarState.Off)
+      .width(StyleConstants.FULL_WIDTH)
+      .height(StyleConstants.FULL_HEIGHT)
+      .backgroundColor('#F3F4F6');
     }
-    .width('100%')
-    .height('100%')
-    .backgroundColor('#F0F4F8')
+    .hideTitleBar(true)
+    .padding({ top: this.getUIContext().px2vp(this.topRectHeight) });
   }
 
-  async selectImage() {
-    try {
-      let photoSelectOptions = new photoAccessHelper.PhotoSelectOptions();
-      photoSelectOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
-      photoSelectOptions.maxSelectNumber = 1;
-      let photoPicker = new photoAccessHelper.PhotoViewPicker();
-      let photoSelectResult = await photoPicker.select(photoSelectOptions);
-      if (photoSelectResult && photoSelectResult.photoUris.length > 0) {
-        this.selectedImageUri = photoSelectResult.photoUris[0];
-        let file = fs.openSync(this.selectedImageUri, fs.OpenMode.READ_ONLY);
-        this.imageFd = file.fd;
-      }
-    } catch (err) {
-      console.error('PhotoViewPicker.select failed: ' + JSON.stringify(err));
+  @Builder
+  ActionButton(label: string, bgColor: string, action: () => void) {
+    Button() {
+      Text(label).fontSize(13);
     }
+    .backgroundColor(bgColor)
+    .borderRadius(20)
+    .onClick(action);
   }
 
-  async testConnection() {
-    try {
-      let httpRequest = http.createHttp();
-      let url = 'http://10.0.2.2:8000/api/test';
-      let response = await httpRequest.request(url, {
-        method: http.RequestMethod.GET,
-        expectDataType: http.HttpDataType.OBJECT
-      });
-      if (response.responseCode === 200) {
-        let res = response.result as TestResponse;
-        this.getUIContext().getPromptAction().showDialog({
-          title: '连接测试成功',
-          message: res.message || '后端响应正常'
-        });
-      } else {
-        this.getUIContext().getPromptAction().showToast({ message: '连接失败: ' + response.responseCode });
-      }
-    } catch (err) {
-      this.getUIContext().getPromptAction().showDialog({
-        title: '连接异常',
-        message: '请检查后端是否启动及网络配置。\n错误码: ' + JSON.stringify(err)
-      });
-    }
-  }
-
-  async startSearch() {
-    if (!this.questionText.trim() && !this.selectedImageUri) {
-      promptAction.showToast({ message: '请输入题目内容或上传图片' });
+  private doSend(text: string): void {
+    if (text.trim() === '' || this.isSending) {
       return;
     }
+    this.inputText = '';
+    this.showRecommend = false;
+    this.chatVM.sendMessage(text.trim());
+    this.scrollToBottom();
+  }
 
-    this.isLoading = true;
-    this.aiAnswer = '';
-
-    try {
-      let httpRequest = http.createHttp();
-      let url = 'http://10.0.2.2:8000/api/ai/qa';
-      
-      let headers: Record<string, string> = {
-        'Accept': 'application/json'
-      };
-
-      let extraData: string | ArrayBuffer = '';
-
-      if (!this.selectedImageUri) {
-        headers['Content-Type'] = 'application/x-www-form-urlencoded';
-        extraData = `question=${encodeURIComponent(this.questionText.trim())}`;
-      } else {
-        let boundary = 'Boundary' + Date.now();
-        headers['Content-Type'] = `multipart/form-data; boundary=${boundary}`;
-
-        let bodyPrefix = `--${boundary}\r\n`;
-        if (this.questionText.trim()) {
-          bodyPrefix += `Content-Disposition: form-data; name="question"\r\n\r\n`;
-          bodyPrefix += `${this.questionText.trim()}\r\n`;
-          bodyPrefix += `--${boundary}\r\n`;
-        }
-        bodyPrefix += `Content-Disposition: form-data; name="image"; filename="image.jpg"\r\n`;
-        bodyPrefix += `Content-Type: image/jpeg\r\n\r\n`;
-
-        let bodySuffix = `\r\n--${boundary}--\r\n`;
-
-        let textEncoder = new util.TextEncoder();
-        let prefixUint8 = textEncoder.encode(bodyPrefix);
-        let suffixUint8 = textEncoder.encode(bodySuffix);
-        
-        let fileData = new ArrayBuffer(0);
-        if (this.imageFd !== -1) {
-          let stat = fs.statSync(this.imageFd);
-          fileData = new ArrayBuffer(stat.size);
-          fs.readSync(this.imageFd, fileData);
-        }
-
-        let combined = new Uint8Array(prefixUint8.length + fileData.byteLength + suffixUint8.length);
-        combined.set(prefixUint8, 0);
-        combined.set(new Uint8Array(fileData), prefixUint8.length);
-        combined.set(suffixUint8, prefixUint8.length + fileData.byteLength);
-        
-        extraData = combined.buffer;
-        headers['Content-Length'] = combined.length.toString();
-      }
-
-      let options: http.HttpRequestOptions = {
-        method: http.RequestMethod.POST,
-        header: headers,
-        extraData: extraData,
-        expectDataType: http.HttpDataType.STRING, 
-        connectTimeout: 30000,
-        readTimeout: 30000
-      };
-
-      console.info('Sending search request to: ' + url);
-      let response = await httpRequest.request(url, options);
-      
-      if (response.responseCode === 200) {
-        let resultStr = response.result as string;
-        let result = JSON.parse(resultStr) as ApiResponse;
-        if (result.code === 200) {
-          this.aiAnswer = result.data.answer;
-        } else {
-          this.aiAnswer = '服务提示: ' + (result.msg || '解析失败');
-        }
-      } else {
-        this.aiAnswer = `请求失败\n状态码: ${response.responseCode}\n响应: ${response.result}`;
-      }
-    } catch (err) {
-      this.aiAnswer = '请求异常: ' + JSON.stringify(err);
-    } finally {
-      this.isLoading = false;
-    }
+  private scrollToBottom(): void {
+    setTimeout(() => {
+      this.scroller.scrollEdge(Edge.Bottom);
+    }, 100);
   }
 }
 
