@@ -66,6 +66,15 @@ export struct MineErrorPage {
     this.pathStack.clear();
   }
 
+  handleAiAttribution(): void {
+    AppStorage.setOrCreate('triggerErrorAttribution', true);
+    const tabIndex = AppStorage.get<number>('currentTabIndex');
+    if (tabIndex !== undefined) {
+      AppStorage.setOrCreate('currentTabIndex', 2);
+    }
+    this.pathStack.clear();
+  }
+
   getOptionLabel(index: number): string {
     return index < this.tagLabels.length ? this.tagLabels[index] : String.fromCharCode(65 + index);
   }
@@ -280,13 +289,13 @@ export struct MineErrorPage {
 
   @Builder
   BottomActions() {
-    Row({ space: 12 }) {
+    Row({ space: 8 }) {
       Button() {
         Row({ space: 4 }) {
           Text('🤖')
-            .fontSize(16);
+            .fontSize(14);
           Text('AI 分析错题')
-            .fontSize(14)
+            .fontSize(12)
             .fontColor(Color.White);
         };
       }
@@ -300,11 +309,28 @@ export struct MineErrorPage {
 
       Button() {
         Row({ space: 4 }) {
+          Text('🔎')
+            .fontSize(14);
+          Text('智能归因')
+            .fontSize(12)
+            .fontColor(Color.White);
+        };
+      }
+      .layoutWeight(1)
+      .height(42)
+      .backgroundColor('#D97706')
+      .borderRadius(8)
+      .onClick(() => {
+        this.handleAiAttribution();
+      });
+
+      Button() {
+        Row({ space: 4 }) {
           Text('+')
             .fontSize(18)
             .fontColor('#409eff');
           Text('添加错题')
-            .fontSize(14)
+            .fontSize(12)
             .fontColor('#409eff');
         };
       }

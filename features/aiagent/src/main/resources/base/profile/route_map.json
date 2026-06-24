@@ -1,0 +1,24 @@
+{
+  "routerMap": [
+    {
+      "name": "AiChatView",
+      "pageSourceFile": "src/main/ets/components/AiChatView.ets",
+      "buildFunction": "AiChatViewBuilder"
+    },
+    {
+      "name": "AdaptivePracticeView",
+      "pageSourceFile": "src/main/ets/components/AdaptivePracticeView.ets",
+      "buildFunction": "AdaptivePracticeViewBuilder"
+    },
+    {
+      "name": "PhotoSearchView",
+      "pageSourceFile": "src/main/ets/components/PhotoSearchView.ets",
+      "buildFunction": "PhotoSearchViewBuilder"
+    },
+    {
+      "name": "PhotoSearchHistoryView",
+      "pageSourceFile": "src/main/ets/components/PhotoSearchHistoryView.ets",
+      "buildFunction": "PhotoSearchHistoryViewBuilder"
+    }
+  ]
+}

@@ -27,6 +27,7 @@ export struct AiChatView {
   @StorageProp('topRectHeight') topRectHeight: number = 0;
   @StorageProp('bottomRectHeight') bottomRectHeight: number = 0;
   @StorageProp('triggerErrorAnalysis') @Watch('onTriggerErrorAnalysis') triggerErrorAnalysis: boolean = false;
+  @StorageProp('triggerErrorAttribution') @Watch('onTriggerErrorAttribution') triggerErrorAttribution: boolean = false;
   @State inputText: string = '';
   @State showRecommend: boolean = true;
   @State messages: ChatMessage[] = [];
@@ -45,6 +46,7 @@ export struct AiChatView {
       this.syncState();
     });
     this.checkTriggerErrorAnalysis();
+    this.checkTriggerErrorAttribution();
   }
 
   private syncState(): void {
@@ -63,6 +65,18 @@ export struct AiChatView {
       AppStorage.setOrCreate('triggerErrorAnalysis', false);
       this.showRecommend = false;
       this.chatVM.requestErrorBookAnalysis();
+    }
+  }
+
+  onTriggerErrorAttribution(): void {
+    this.checkTriggerErrorAttribution();
+  }
+
+  private checkTriggerErrorAttribution(): void {
+    if (this.triggerErrorAttribution) {
+      AppStorage.setOrCreate('triggerErrorAttribution', false);
+      this.showRecommend = false;
+      this.chatVM.requestErrorAttribution();
     }
   }
 
@@ -111,24 +125,39 @@ export struct AiChatView {
               Text('我可以帮你分析学习成绩、解答问题、制定学习计划')
                 .fontSize(13).fontColor('#6B7280').textAlign(TextAlign.Center);
 
-              Row({ space: 12 }) {
-                this.ActionButton('📊 学习分析', '#1A56DB', () => {
-                  this.showRecommend = false;
-                  const data = this.analysisVM.analysisData;
-                  this.chatVM.requestAnalysis(data);
-                });
-                this.ActionButton('📝 错题分析', '#F56C6C', () => {
-                  this.showRecommend = false;
-                  this.chatVM.requestErrorBookAnalysis();
-                });
-                this.ActionButton('💡 学习建议', '#10B981', () => {
-                  this.showRecommend = false;
-                  this.chatVM.sendMessage('请根据我的学习情况给我一些学习建议', true);
-                });
-                this.ActionButton('📸 拍照搜题', '#8B5CF6', () => {
-                  this.pathStack.pushPathByName('PhotoSearchView', null);
-                });
-              };
+              Column({ space: 10 }) {
+                Row({ space: 8 }) {
+                  this.ActionButton('📊 学习分析', '#1A56DB', () => {
+                    this.showRecommend = false;
+                    const data = this.analysisVM.analysisData;
+                    this.chatVM.requestAnalysis(data);
+                  });
+                  this.ActionButton('📝 错题分析', '#F56C6C', () => {
+                    this.showRecommend = false;
+                    this.chatVM.requestErrorBookAnalysis();
+                  });
+                  this.ActionButton('🧠 自适应练习', '#7C3AED', () => {
+                    this.pathStack.pushPathByName('AdaptivePracticeView', null);
+                  });
+                }
+                .width('100%');
+
+                Row({ space: 8 }) {
+                  this.ActionButton('💡 学习建议', '#10B981', () => {
+                    this.showRecommend = false;
+                    this.chatVM.sendMessage('请根据我的学习情况给我一些学习建议', true);
+                  });
+                  this.ActionButton('📸 拍照搜题', '#8B5CF6', () => {
+                    this.pathStack.pushPathByName('PhotoSearchView', null);
+                  });
+                  this.ActionButton('🔎 智能归因', '#D97706', () => {
+                    this.showRecommend = false;
+                    this.chatVM.requestErrorAttribution();
+                  });
+                }
+                .width('100%');
+              }
+              .width('92%');
             }
             .width('100%')
             .height('100%')
@@ -179,7 +208,13 @@ export struct AiChatView {
             onQuestionClick: (question: string) => {
               if (question.includes('错题本')) {
                 this.showRecommend = false;
-                this.chatVM.requestErrorBookAnalysis();
+                if (question.includes('智能归因')) {
+                  this.chatVM.requestErrorAttribution();
+                } else {
+                  this.chatVM.requestErrorBookAnalysis();
+                }
+              } else if (question.includes('自适应练习')) {
+                this.pathStack.pushPathByName('AdaptivePracticeView', null);
               } else {
                 this.doSend(question);
               }
@@ -229,10 +264,12 @@ export struct AiChatView {
   @Builder
   ActionButton(label: string, bgColor: string, action: () => void) {
     Button() {
-      Text(label).fontSize(13);
+      Text(label).fontSize(12).maxLines(1);
     }
+    .height(36)
+    .layoutWeight(1)
     .backgroundColor(bgColor)
-    .borderRadius(20)
+    .borderRadius(18)
     .onClick(action);
   }
 

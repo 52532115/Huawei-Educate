@@ -59,7 +59,9 @@ export class AiConstants {
 
   static readonly RECOMMEND_QUESTIONS: string[] = [
     '帮我分析一下我的学习情况',
+    '开始一组自适应练习',
     '帮我详细分析我的错题本',
+    '帮我给错题本做智能归因',
     '我最近考试中哪些知识点比较薄弱？',
     '帮我制定一个本周的学习计划',
     '如何提高考试成绩？',

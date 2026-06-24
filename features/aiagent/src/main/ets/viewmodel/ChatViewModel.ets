@@ -24,6 +24,7 @@ import {
 } from './ChatModels';
 import { AiService } from '../service/AiService';
 import { DataCollectService } from '../service/DataCollectService';
+import { ErrorAttributionService } from '../service/ErrorAttributionService';
 import { AiConstants } from '../utils/AiConstants';
 
 @Observed
@@ -308,6 +309,37 @@ export class ChatViewModel {
       this.currentSession.updateTime = Date.now();
       this.notifyChange();
     }
+  }
+
+  requestErrorAttribution(): void {
+    if (this.isLoading) {
+      return;
+    }
+
+    const userMessage = new ChatMessage(
+      this.generateMessageId(),
+      MessageRole.USER,
+      '帮我对错题本做智能归因',
+      MessageStatus.SUCCESS,
+    );
+    this.currentSession.messages = [...this.currentSession.messages, userMessage];
+    this.notifyChange();
+
+    const service = new ErrorAttributionService();
+    const updatedCount = service.updateErrorBookAttributions();
+    const content = updatedCount > 0 ?
+      `已完成 ${updatedCount} 道错题的智能归因，并同步写入错题本。\n\n你现在可以回到错题本查看每道题的「AI分析」结果。建议优先处理归因为“概念理解偏差”和“公式/规则使用错误”的题目。` :
+      '错题本里暂时没有需要补充归因的题目。如果你新增错题或补充错误思路，我可以继续帮你分析。';
+
+    const aiMessage = new ChatMessage(
+      this.generateMessageId(),
+      MessageRole.AI,
+      content,
+      MessageStatus.SUCCESS,
+    );
+    this.currentSession.messages = [...this.currentSession.messages, aiMessage];
+    this.currentSession.updateTime = Date.now();
+    this.notifyChange();
   }
 
   private buildErrorBookAnalysisPrompt(errorQuestions: ErrorQuestionItem[]): string {

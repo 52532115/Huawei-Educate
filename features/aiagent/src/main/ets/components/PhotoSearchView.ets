@@ -3,6 +3,11 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { promptAction } from '@kit.ArkUI';
 import util from '@ohos.util';
+import { AiService } from '../service/AiService';
+import { AiMessage } from '../viewmodel/ChatModels';
+
+const PHOTO_SEARCH_BACKEND_URL = 'http://10.0.2.2:8000';
+const PHOTO_SEARCH_TIMEOUT = 30000;
 
 interface ApiResponse {
   code: number;
@@ -25,6 +30,7 @@ export struct PhotoSearchView {
   @State aiAnswer: string = '';
   @State isLoading: boolean = false;
   @State imageFd: number = -1;
+  private aiService: AiService = new AiService();
   pathStack: NavPathStack = AppStorage.get('pathStack') as NavPathStack;
 
   build() {
@@ -347,7 +353,7 @@ export struct PhotoSearchView {
   async testConnection() {
     try {
       let httpRequest = http.createHttp();
-      let url = 'http://10.0.2.2:8000/api/test';
+      let url = `${PHOTO_SEARCH_BACKEND_URL}/api/test`;
       let response = await httpRequest.request(url, {
         method: http.RequestMethod.GET,
         expectDataType: http.HttpDataType.OBJECT
@@ -379,8 +385,13 @@ export struct PhotoSearchView {
     this.aiAnswer = '';
 
     try {
+      if (!this.selectedImageUri) {
+        this.aiAnswer = await this.searchTextQuestion(this.questionText.trim());
+        return;
+      }
+
       let httpRequest = http.createHttp();
-      let url = 'http://10.0.2.2:8000/api/ai/qa';
+      let url = `${PHOTO_SEARCH_BACKEND_URL}/api/ai/qa`;
 
       let headers: Record<string, string> = {
         'Accept': 'application/json'
@@ -431,8 +442,8 @@ export struct PhotoSearchView {
         header: headers,
         extraData: extraData,
         expectDataType: http.HttpDataType.STRING,
-        connectTimeout: 30000,
-        readTimeout: 30000
+        connectTimeout: PHOTO_SEARCH_TIMEOUT,
+        readTimeout: PHOTO_SEARCH_TIMEOUT
       };
 
       console.info('Sending search request to: ' + url);
@@ -450,10 +461,37 @@ export struct PhotoSearchView {
         this.aiAnswer = `请求失败\n状态码: ${response.responseCode}\n响应: ${response.result}`;
       }
     } catch (err) {
-      this.aiAnswer = '请求异常: ' + JSON.stringify(err);
+      this.aiAnswer = this.buildSearchErrorMessage(err, this.selectedImageUri.length > 0);
     } finally {
       this.isLoading = false;
     }
+  }
+
+  private async searchTextQuestion(question: string): Promise<string> {
+    const sysMsg = new AiMessage();
+    sysMsg.role = 'system';
+    sysMsg.content =
+      '你是一个专业的 AI 搜题助教。请用中文回答，按“题目理解、解题步骤、最终答案、易错提醒”的结构解析题目。回答要清晰、具体，不要只给答案。';
+
+    const userMsg = new AiMessage();
+    userMsg.role = 'user';
+    userMsg.content = `请解析这道题：\n${question}`;
+
+    let fullAnswer = '';
+    await this.aiService.sendChatMessage([sysMsg, userMsg], (chunk: string) => {
+      fullAnswer = chunk;
+      this.aiAnswer = chunk;
+    });
+
+    return fullAnswer.length > 0 ? fullAnswer : 'AI 暂未返回解析结果，请稍后重试。';
+  }
+
+  private buildSearchErrorMessage(err: Object, requiresBackend: boolean): string {
+    if (requiresBackend) {
+      return '图片搜题请求超时或连接失败。\n\n当前图片/OCR 搜题仍依赖本地后端服务，请确认电脑端已启动后端，并且接口可访问：\n' +
+        `${PHOTO_SEARCH_BACKEND_URL}/api/ai/qa\n\n原始错误：${JSON.stringify(err)}`;
+    }
+    return 'AI 文本解析请求失败，请检查网络连接或 AI 服务配置。\n\n原始错误：' + JSON.stringify(err);
   }
 }
 
