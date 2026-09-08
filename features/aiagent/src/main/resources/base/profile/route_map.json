@@ -19,6 +19,11 @@
       "name": "PhotoSearchHistoryView",
       "pageSourceFile": "src/main/ets/components/PhotoSearchHistoryView.ets",
       "buildFunction": "PhotoSearchHistoryViewBuilder"
+    },
+    {
+      "name": "LearnerProfileView",
+      "pageSourceFile": "src/main/ets/components/LearnerProfileView.ets",
+      "buildFunction": "LearnerProfileViewBuilder"
     }
   ]
 }

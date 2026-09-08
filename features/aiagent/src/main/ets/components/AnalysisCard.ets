@@ -46,10 +46,10 @@ export struct AnalysisCard {
   ScoreOverview() {
     Row() {
       Column() {
-        Text(`${this.analysisData.avgScore}`)
+        Text(this.analysisData.totalExams > 0 ? `${this.analysisData.avgScore}` : '--')
           .fontSize(36)
           .fontWeight(FontWeight.Bold)
-          .fontColor(this.getScoreColor(this.analysisData.avgScore));
+          .fontColor(this.analysisData.totalExams > 0 ? this.getScoreColor(this.analysisData.avgScore) : '#9CA3AF');
         Text('平均分')
           .fontSize(12)
           .fontColor('#6B7280');
@@ -60,6 +60,10 @@ export struct AnalysisCard {
         Text(`共 ${this.analysisData.totalExams} 次考试`)
           .fontSize(12)
           .fontColor('#374151');
+        Text(this.analysisData.totalStudyTime > 0 ?
+          `累计学习 ${this.formatStudyTime(this.analysisData.totalStudyTime)}` : '学习时长暂无记录')
+          .fontSize(11)
+          .fontColor('#6B7280');
         ForEach(this.analysisData.scoreTrend, (item: ScoreTrendItem) => {
           Row({ space: 8 }) {
             Text(item.examName)
@@ -91,32 +95,38 @@ export struct AnalysisCard {
         .fontColor('#374151')
         .margin({ bottom: 4 });
 
-      ForEach(this.analysisData.knowledgePoints, (kp: KnowledgePoint) => {
-        Row() {
-          Text(kp.name)
-            .fontSize(12)
-            .fontColor('#374151')
-            .width(80);
+      if (this.analysisData.knowledgePoints.length === 0) {
+        Text('暂无错题数据，完成练习后将生成知识点诊断')
+          .fontSize(11)
+          .fontColor('#9CA3AF');
+      } else {
+        ForEach(this.analysisData.knowledgePoints, (kp: KnowledgePoint) => {
+          Row() {
+            Text(kp.name)
+              .fontSize(12)
+              .fontColor('#374151')
+              .width(80);
 
-          Progress({
-            value: kp.mastery,
-            total: 100,
-            type: ProgressType.Capsule,
-          })
-            .width('100%')
-            .height(8)
-            .color(this.getMasteryColor(kp.mastery))
-            .layoutWeight(1);
+            Progress({
+              value: kp.mastery,
+              total: 100,
+              type: ProgressType.Capsule,
+            })
+              .width('100%')
+              .height(8)
+              .color(this.getMasteryColor(kp.mastery))
+              .layoutWeight(1);
 
-          Text(`${kp.mastery}%`)
-            .fontSize(11)
-            .fontColor(this.getMasteryColor(kp.mastery))
-            .fontWeight(FontWeight.Medium)
-            .width(36)
-            .textAlign(TextAlign.End);
-        }
-        .width('100%');
-      }, (kp: KnowledgePoint) => kp.name);
+            Text(`${kp.mastery}%`)
+              .fontSize(11)
+              .fontColor(this.getMasteryColor(kp.mastery))
+              .fontWeight(FontWeight.Medium)
+              .width(36)
+              .textAlign(TextAlign.End);
+          }
+          .width('100%');
+        }, (kp: KnowledgePoint) => kp.name);
+      }
     }
     .width('100%');
   }
@@ -130,38 +140,44 @@ export struct AnalysisCard {
         .fontColor('#374151')
         .margin({ bottom: 4 });
 
-      ForEach(this.analysisData.courseProgress, (cp: CourseProgressItem) => {
-        Row() {
-          Column() {
-            Text(cp.courseName)
-              .fontSize(12)
-              .fontColor('#374151')
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width(100);
-            Text(cp.teacher)
-              .fontSize(10)
-              .fontColor('#9CA3AF');
-          };
+      if (this.analysisData.courseProgress.length === 0) {
+        Text('暂无课程进度记录')
+          .fontSize(11)
+          .fontColor('#9CA3AF');
+      } else {
+        ForEach(this.analysisData.courseProgress, (cp: CourseProgressItem) => {
+          Row() {
+            Column() {
+              Text(cp.courseName)
+                .fontSize(12)
+                .fontColor('#374151')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width(100);
+              Text(cp.teacher)
+                .fontSize(10)
+                .fontColor('#9CA3AF');
+            };
 
-          Progress({
-            value: cp.progress,
-            total: 100,
-            type: ProgressType.Capsule,
-          })
-            .width('100%')
-            .height(6)
-            .color('#10B981')
-            .layoutWeight(1);
+            Progress({
+              value: cp.progress,
+              total: 100,
+              type: ProgressType.Capsule,
+            })
+              .width('100%')
+              .height(6)
+              .color('#10B981')
+              .layoutWeight(1);
 
-          Text(`${cp.progress}%`)
-            .fontSize(11)
-            .fontColor('#6B7280')
-            .width(36)
-            .textAlign(TextAlign.End);
-        }
-        .width('100%');
-      }, (cp: CourseProgressItem) => cp.courseName);
+            Text(`${cp.progress}%`)
+              .fontSize(11)
+              .fontColor('#6B7280')
+              .width(36)
+              .textAlign(TextAlign.End);
+          }
+          .width('100%');
+        }, (cp: CourseProgressItem) => cp.courseName);
+      }
     }
     .width('100%');
   }
@@ -194,6 +210,12 @@ export struct AnalysisCard {
             .layoutWeight(1);
         };
       }
+
+      if (this.analysisData.weakPoints.length === 0 && this.analysisData.strengths.length === 0) {
+        Text('当前数据不足以判断优势和薄弱环节')
+          .fontSize(11)
+          .fontColor('#9CA3AF');
+      }
     }
     .width('100%');
   }
@@ -216,5 +238,14 @@ export struct AnalysisCard {
       return '#F59E0B';
     }
     return '#EF4444';
+  }
+
+  private formatStudyTime(minutes: number): string {
+    if (minutes < 60) {
+      return `${minutes} 分钟`;
+    }
+    const hours = Math.floor(minutes / 60);
+    const remainMinutes = minutes % 60;
+    return remainMinutes > 0 ? `${hours} 小时 ${remainMinutes} 分钟` : `${hours} 小时`;
   }
 }

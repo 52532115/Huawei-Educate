@@ -64,29 +64,42 @@ export class ErrorAttributionService {
     userLabel: string,
     correctLabel: string,
   ): ErrorAttributionResult {
-    const corpus = `${title} ${knowledgeTag} ${mistakeReason} ${userNote}`;
-    const normalized = corpus.toLowerCase();
+    // Error attribution must be based on the learner's reasoning evidence.
+    // Including the title/category here would make subjects such as
+    // "计算机网络" look like calculation mistakes merely because of their name.
+    const evidenceCorpus = `${mistakeReason} ${userNote}`.trim();
+    const normalized = evidenceCorpus.toLowerCase();
     let causeType = ErrorCauseType.UNKNOWN;
     let label = '待进一步观察';
     let confidence = 55;
     let evidence = '当前错题信息较少，建议补充错误思路和学习笔记以提高归因准确度。';
 
-    if (this.containsAny(normalized, ['概念', '混淆', '误以为', '理解', '定义', '性质'])) {
+    if (this.containsAny(normalized, ['粗心', '审题', '看错题', '漏看', '抄错', '忘记检查'])) {
+      causeType = ErrorCauseType.CARELESS;
+      label = '审题/细节失误';
+      confidence = 86;
+      evidence = '错误思路中出现粗心、审题或漏看类明确线索，属于可通过检查清单改善的失误。';
+    } else if (this.containsAny(normalized, ['概念', '混淆', '误以为', '理解偏差', '定义', '性质'])) {
       causeType = ErrorCauseType.CONCEPT;
       label = '概念理解偏差';
       confidence = 84;
       evidence = '错误描述中出现概念、定义或混淆类线索，说明核心概念还没有稳定建立。';
-    } else if (this.containsAny(normalized, ['公式', '定理', '法则', '规则', '等价', '判别法'])) {
+    } else if (this.containsAny(normalized, ['公式', '定理', '法则', '规则', '等价条件', '判别法'])) {
       causeType = ErrorCauseType.FORMULA;
       label = '公式/规则使用错误';
       confidence = 80;
       evidence = '错误描述中出现公式、定理或判别法线索，说明规则适用条件需要重新梳理。';
-    } else if (this.containsAny(normalized, ['步骤', '方法', '思路', '不会', '忘记检查', '只计算'])) {
+    } else if (this.containsAny(normalized, ['步骤', '方法', '思路', '不会做', '解法', '跳步', '不完整'])) {
       causeType = ErrorCauseType.METHOD;
       label = '解题方法不完整';
       confidence = 78;
       evidence = '错误描述中出现步骤、方法或遗漏关键环节的线索，说明解题流程需要固化。';
-    } else if (this.containsAny(normalized, ['计算', '算错', '漏写', '漏掉', '粗心', '看错', '忘记'])) {
+    } else if (this.containsAny(normalized, ['计算', '算错', '运算', '符号错误', '进位', '小数点'])) {
+      causeType = ErrorCauseType.CALCULATION;
+      label = '计算过程错误';
+      confidence = 78;
+      evidence = '错误思路中出现计算、运算或数值处理线索，说明需要强化分步演算与结果复核。';
+    } else if (this.containsAny(normalized, ['漏写', '漏掉', '看错', '忘记'])) {
       causeType = ErrorCauseType.CARELESS;
       label = '审题/细节失误';
       confidence = 74;
@@ -144,7 +157,10 @@ export class ErrorAttributionService {
     if (causeType === ErrorCauseType.METHOD) {
       return `把「${knowledgeTag}」题型拆成固定步骤，做题时逐步勾选，避免跳步。`;
     }
-    if (causeType === ErrorCauseType.CALCULATION || causeType === ErrorCauseType.CARELESS) {
+    if (causeType === ErrorCauseType.CALCULATION) {
+      return `围绕「${knowledgeTag}」进行分步演算，每一步标注依据，并用逆运算或代入法复核结果。`;
+    }
+    if (causeType === ErrorCauseType.CARELESS) {
       return `建立检查清单：重读题干、核对单位/边界条件、复算关键步骤。`;
     }
     return `补充这道题的错误思路，并围绕「${knowledgeTag}」做一次概念回顾。`;
@@ -159,6 +175,9 @@ export class ErrorAttributionService {
     }
     if (causeType === ErrorCauseType.FORMULA) {
       return `把「${knowledgeTag}」相关公式写成一张条件-结论对照表。`;
+    }
+    if (causeType === ErrorCauseType.CALCULATION) {
+      return `下一次「${knowledgeTag}」练习保留完整草稿，并在提交前复算关键数值。`;
     }
     return `从「${knowledgeTag}」的基础题开始，连续做对 3 题后再进入变式题。`;
   }

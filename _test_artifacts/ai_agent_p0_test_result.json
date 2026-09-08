@@ -1,0 +1,51 @@
+[
+  {
+    "group": "SSE解析",
+    "name": "拼接多个data块",
+    "status": "PASS",
+    "actual": "你好",
+    "expected": "你好"
+  },
+  {
+    "group": "SSE解析",
+    "name": "忽略注释/空choices/坏JSON",
+    "status": "PASS",
+    "actual": "",
+    "expected": ""
+  },
+  {
+    "group": "工具定义",
+    "name": "7个工具定义结构合法",
+    "status": "PASS",
+    "actual": "array",
+    "expected": "7 valid tools"
+  },
+  {
+    "group": "工具执行",
+    "name": "get_learning_stats返回统计JSON",
+    "status": "PASS",
+    "actual": "{\"totalExams\":0,\"avgScore\":0,\"totalStudyTime\":0,\"scoreTrend\":[],\"knowledgePoints\":[],\"courseProgress\":[],\"weakPoints\":[],\"strengths\":[]}",
+    "expected": "has totalExams"
+  },
+  {
+    "group": "工具执行",
+    "name": "analyze_error_book返回updatedCount",
+    "status": "PASS",
+    "actual": "{\"updatedCount\":0,\"message\":\"错题本里暂时没有需要补充归因的题目。\"}",
+    "expected": "has updatedCount"
+  },
+  {
+    "group": "工具执行",
+    "name": "未知工具返回error字段",
+    "status": "PASS",
+    "actual": "{\"error\":\"未知工具：unknown_tool\"}",
+    "expected": "has error"
+  },
+  {
+    "group": "步骤文案",
+    "name": "所有工具都有中文步骤文案",
+    "status": "PASS",
+    "actual": "labels",
+    "expected": "all present"
+  }
+]

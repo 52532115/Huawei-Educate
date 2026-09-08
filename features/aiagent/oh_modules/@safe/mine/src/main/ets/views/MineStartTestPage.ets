@@ -14,12 +14,23 @@
  */
 
 import { StyleConstants } from '@safe/basic';
+import fileIo from '@ohos.file.fs';
 import { getErrorModels } from '../viewmodel/MineLocalData';
 import { AnswerModel, MineErrorModel } from '../viewmodel/MineErrorModel';
 import { LogoutDialog } from './LogoutDialog';
 
 // 考试总时长（单位毫秒）
 const EXAM_DURATION = 30000;
+const EXAM_HISTORY_KEY = 'ExamHistory';
+const EXAM_HISTORY_FILE = '/examHistory.json';
+
+interface ExamHistoryRecord {
+  name: string;
+  score: number;
+  date: string;
+  duration: number;
+  timestamp: number;
+}
 
 @Component
 export struct MineStartTestPage {
@@ -51,8 +62,10 @@ export struct MineStartTestPage {
         }
         this.textTimerController.reset();
         AppStorage.setOrCreate('MyCount', 0);
-        AppStorage.setOrCreate('Time', EXAM_DURATION - this.elapsedTime);
+        const duration = EXAM_DURATION - this.elapsedTime;
+        AppStorage.setOrCreate('Time', duration);
         AppStorage.setOrCreate('Score', this.score);
+        this.recordExamResult(this.score, duration);
       },
       message: '是否提交试卷?'
     }),
@@ -90,6 +103,7 @@ export struct MineStartTestPage {
       AppStorage.setOrCreate('MyCount', 0);
       AppStorage.setOrCreate('Score', this.score);
       AppStorage.setOrCreate('Time', EXAM_DURATION);
+      this.recordExamResult(this.score, EXAM_DURATION);
     } else {
       if (this.currentIndex >= this.questionData.length - 1) {
         this.tjDialog.open();
@@ -103,6 +117,54 @@ export struct MineStartTestPage {
   getValueByKey(key: string): number | undefined {
     const item = this.answerList.find(pair => pair.key === key);
     return item?.value;
+  }
+
+  private recordExamResult(score: number, duration: number): void {
+    let records: ExamHistoryRecord[] = [];
+    let stored = '';
+    try {
+      stored = AppStorage.get<string>(EXAM_HISTORY_KEY) || '';
+      if (stored.length === 0) {
+        const filesDir = AppStorage.get<string>('filesDir');
+        if (filesDir) {
+          stored = fileIo.readTextSync(filesDir + EXAM_HISTORY_FILE);
+        }
+      }
+      if (stored.length > 0) {
+        records = JSON.parse(stored) as ExamHistoryRecord[];
+      }
+    } catch (e) {
+      records = [];
+    }
+
+    const now = Date.now();
+    records.push({
+      name: `第 ${records.length + 1} 次考试`,
+      score: Math.max(0, Math.min(100, Math.round(score))),
+      date: new Date(now).toISOString().split('T')[0],
+      duration: Math.max(0, Math.round(duration)),
+      timestamp: now,
+    });
+
+    // Keep a bounded local history so analysis remains fast on long-lived installs.
+    if (records.length > 50) {
+      records = records.slice(records.length - 50);
+    }
+
+    const json = JSON.stringify(records);
+    AppStorage.setOrCreate(EXAM_HISTORY_KEY, json);
+    const filesDir = AppStorage.get<string>('filesDir');
+    if (!filesDir) {
+      return;
+    }
+
+    try {
+      const file: fileIo.File = fileIo.openSync(filesDir + EXAM_HISTORY_FILE, 0o2 | 0o100 | 0o1000);
+      fileIo.writeSync(file.fd, json);
+      fileIo.closeSync(file);
+    } catch (e) {
+      // AppStorage still retains the result for the current application session.
+    }
   }
 
   build() {

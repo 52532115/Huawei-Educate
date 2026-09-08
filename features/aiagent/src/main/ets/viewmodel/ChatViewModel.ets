@@ -23,9 +23,19 @@ import {
   ErrorQuestionItem,
 } from './ChatModels';
 import { AiService } from '../service/AiService';
+import { AgentService, AgentLimitError, AgentTimeoutError } from '../service/AgentService';
+import { SessionStore } from '../service/SessionStore';
 import { DataCollectService } from '../service/DataCollectService';
 import { ErrorAttributionService } from '../service/ErrorAttributionService';
+import { AdaptivePracticeService } from '../service/AdaptivePracticeService';
+import { PracticeSessionStore } from '../service/PracticeSessionStore';
+import { IntentRouter, ChatIntent } from '../service/IntentRouter';
+import { ContextCompressor } from '../service/ContextCompressor';
+import { LearnerProfileStore } from '../service/LearnerProfileStore';
+import { Logger } from '@safe/basic';
 import { AiConstants } from '../utils/AiConstants';
+
+const ACTION_START_PRACTICE = '{"action":"start_practice"}';
 
 @Observed
 export class ChatViewModel {
@@ -35,19 +45,37 @@ export class ChatViewModel {
   isStreaming: boolean;
   inputText: string;
   private aiService: AiService;
+  private agentService: AgentService;
+  private sessionStore: SessionStore;
+  private intentRouter: IntentRouter;
+  private contextCompressor: ContextCompressor;
+  private profileStore: LearnerProfileStore;
   private messageIdCounter: number;
+  private activeStepId: string = '';
   private onStateChange?: () => void;
 
   constructor() {
     this.aiService = new AiService();
+    this.agentService = new AgentService();
+    this.sessionStore = new SessionStore();
+    this.intentRouter = new IntentRouter();
+    this.contextCompressor = new ContextCompressor();
+    this.profileStore = new LearnerProfileStore();
     this.sessionList = [];
     this.messageIdCounter = 0;
     this.isLoading = false;
     this.isStreaming = false;
     this.inputText = '';
-    this.currentSession = this.createNewSession();
-    this.sessionList = [...this.sessionList, this.currentSession];
-    this.initWelcomeMessage();
+
+    const restored = this.sessionStore.loadSessions();
+    if (restored.length > 0) {
+      this.sessionList = restored;
+      this.currentSession = restored[0];
+    } else {
+      this.currentSession = this.createNewSession();
+      this.sessionList = [...this.sessionList, this.currentSession];
+      this.initWelcomeMessage();
+    }
   }
 
   setStateChangeCallback(cb: () => void): void {
@@ -88,6 +116,7 @@ export class ChatViewModel {
     this.currentSession = this.createNewSession();
     this.sessionList = [...this.sessionList, this.currentSession];
     this.initWelcomeMessage();
+    this.saveSessions();
     this.notifyChange();
   }
 
@@ -110,6 +139,7 @@ export class ChatViewModel {
           this.newSession();
         }
       }
+      this.saveSessions();
       this.notifyChange();
     }
   }
@@ -144,34 +174,91 @@ export class ChatViewModel {
     this.isStreaming = true;
     this.notifyChange();
 
+    const intent = this.intentRouter.route(text.trim());
     try {
-      const contextMessages = this.buildContextMessages(includeAnalysis);
-      const userMsg = new AiMessage();
-      userMsg.role = 'user';
-      userMsg.content = text.trim();
-      contextMessages.push(userMsg);
-
-      let fullContent = '';
-      await this.aiService.sendChatMessage(
-        contextMessages,
-        (chunk: string) => {
-          fullContent += chunk;
-          aiMessage.content = fullContent;
-          this.currentSession.messages = [...this.currentSession.messages];
-          this.notifyChange();
-        },
-      );
-
-      aiMessage.status = MessageStatus.SUCCESS;
+      if (intent === ChatIntent.PRACTICE) {
+        this.replyPracticeReady(aiMessage);
+      } else if (intent === ChatIntent.CHAT) {
+        await this.runPlainChat(text.trim(), aiMessage);
+      } else {
+        await this.runAgentChat(text.trim(), aiMessage);
+      }
     } catch (err) {
-      aiMessage.content = '抱歉，我暂时无法回复你的问题。请检查网络连接后重试。';
+      Logger.error(`[ChatViewModel] send failed (${intent}): ${err instanceof Error ? err.message : err}`);
+      aiMessage.content = this.buildErrorMessage(err);
       aiMessage.status = MessageStatus.FAILED;
     } finally {
       this.isLoading = false;
       this.isStreaming = false;
       this.currentSession.updateTime = Date.now();
+      this.saveSessions();
       this.notifyChange();
     }
+  }
+
+  /** PRACTICE intent: generate locally, hand off to the practice page, no API call. */
+  private replyPracticeReady(aiMessage: ChatMessage): void {
+    const practiceService = new AdaptivePracticeService();
+    const session = practiceService.generateSession(6);
+    new PracticeSessionStore().savePendingSession(session);
+    // Same profile write-back as the agent's generate_practice tool.
+    const topics: string[] = [];
+    for (let i = 0; i < session.questions.length; i++) {
+      topics.push(session.questions[i].title);
+    }
+    this.profileStore.recordFocusTopics(topics);
+    aiMessage.content = `已按你的薄弱知识点生成一组共 ${session.questions.length} 道练习题，点击下方按钮开始吧！`;
+    aiMessage.action = 'start_practice';
+    aiMessage.status = MessageStatus.SUCCESS;
+  }
+
+  /** CHAT intent: plain conversation without tools (fast & cheap), with streaming + fallback. */
+  private async runPlainChat(userText: string, aiMessage: ChatMessage): Promise<void> {
+    const messages = this.buildContextMessages(AiConstants.SYSTEM_PROMPT);
+    const userMsg = new AiMessage();
+    userMsg.role = 'user';
+    userMsg.content = userText;
+    messages.push(userMsg);
+
+    let fullContent = '';
+    const delivered = await this.aiService.chatWithFallback(
+      messages,
+      (chunk: string) => {
+        fullContent += chunk;
+        aiMessage.content = fullContent;
+        this.currentSession.messages = [...this.currentSession.messages];
+        this.notifyChange();
+      },
+    );
+
+    if (delivered === 0) {
+      throw new Error('AI 未返回有效回答，请稍后重试。');
+    }
+    aiMessage.status = MessageStatus.SUCCESS;
+  }
+
+  /** ANALYTICS intent: full agent loop with tool access. */
+  private async runAgentChat(userText: string, aiMessage: ChatMessage): Promise<void> {
+    let fullContent = '';
+    await this.agentService.run(
+      this.buildAgentMessages(userText),
+      (stepText: string, isDone: boolean) => {
+        this.showStepMessage(stepText, isDone);
+      },
+      (chunk: string) => {
+        fullContent += chunk;
+        aiMessage.content = fullContent;
+        this.currentSession.messages = [...this.currentSession.messages];
+        this.notifyChange();
+      },
+    );
+    if (fullContent.trim().length === 0) {
+      throw new Error('AI 未返回有效回答，请稍后重试。');
+    }
+    this.extractAction(aiMessage);
+    // The tutor's own conclusion becomes part of its cross-session memory.
+    this.profileStore.recordAnalysisSummary(aiMessage.content);
+    aiMessage.status = MessageStatus.SUCCESS;
   }
 
   async requestAnalysis(analysisData: LearningAnalysisData): Promise<void> {
@@ -213,7 +300,7 @@ export class ChatViewModel {
       const messages: AiMessage[] = [sysMsg, usrMsg];
 
       let fullContent = '';
-      await this.aiService.sendChatMessage(
+      await this.aiService.chatStream(
         messages,
         (chunk: string) => {
           fullContent += chunk;
@@ -223,6 +310,9 @@ export class ChatViewModel {
         },
       );
 
+      if (fullContent.trim().length === 0) {
+        aiMessage.content = this.generateLocalAnalysisText(analysisData);
+      }
       aiMessage.status = MessageStatus.SUCCESS;
     } catch (err) {
       aiMessage.content = this.generateLocalAnalysisText(analysisData);
@@ -231,6 +321,7 @@ export class ChatViewModel {
       this.isLoading = false;
       this.isStreaming = false;
       this.currentSession.updateTime = Date.now();
+      this.saveSessions();
       this.notifyChange();
     }
   }
@@ -289,7 +380,7 @@ export class ChatViewModel {
       const messages: AiMessage[] = [sysMsg, usrMsg];
 
       let fullContent = '';
-      await this.aiService.sendChatMessage(
+      await this.aiService.chatStream(
         messages,
         (chunk: string) => {
           fullContent += chunk;
@@ -299,6 +390,9 @@ export class ChatViewModel {
         },
       );
 
+      if (fullContent.trim().length === 0) {
+        aiMessage.content = this.generateLocalErrorAnalysisText(errorQuestions);
+      }
       aiMessage.status = MessageStatus.SUCCESS;
     } catch (err) {
       aiMessage.content = this.generateLocalErrorAnalysisText(errorQuestions);
@@ -307,6 +401,7 @@ export class ChatViewModel {
       this.isLoading = false;
       this.isStreaming = false;
       this.currentSession.updateTime = Date.now();
+      this.saveSessions();
       this.notifyChange();
     }
   }
@@ -498,16 +593,40 @@ export class ChatViewModel {
     return text;
   }
 
-  private buildContextMessages(includeAnalysis: boolean): AiMessage[] {
+  private buildContextMessages(systemPrompt: string): AiMessage[] {
     const sysMsg = new AiMessage();
     sysMsg.role = 'system';
-    sysMsg.content = AiConstants.SYSTEM_PROMPT;
+    sysMsg.content = systemPrompt;
 
     const messages: AiMessage[] = [sysMsg];
 
-    const recentMessages = this.currentSession.messages
-      .filter((m) => m.role === MessageRole.USER || m.role === MessageRole.AI)
-      .slice(-(AiConstants.MAX_HISTORY_MESSAGES));
+    // Inject the learner's cross-session profile as a second system message so
+    // both the plain chat path and the agent loop "remember" the learner.
+    const profilePrompt = this.profileStore.buildProfilePrompt();
+    if (profilePrompt.length > 0) {
+      const profileMsg = new AiMessage();
+      profileMsg.role = 'system';
+      profileMsg.content = profilePrompt;
+      messages.push(profileMsg);
+    }
+
+    const allChat = this.currentSession.messages
+      .filter((m) => m.role === MessageRole.USER || m.role === MessageRole.AI);
+    const windowSize = AiConstants.MAX_HISTORY_MESSAGES;
+    let recentMessages = allChat.slice(-windowSize);
+
+    // Compress older turns into a local summary so early context survives
+    // the history window instead of being hard-truncated.
+    if (allChat.length > windowSize) {
+      const older = allChat.slice(0, allChat.length - windowSize);
+      const summary = this.contextCompressor.buildHistorySummary(older);
+      if (summary.length > 0) {
+        const summaryMsg = new AiMessage();
+        summaryMsg.role = 'system';
+        summaryMsg.content = summary;
+        messages.push(summaryMsg);
+      }
+    }
 
     for (const msg of recentMessages) {
       if (msg.role === MessageRole.USER) {
@@ -526,10 +645,140 @@ export class ChatViewModel {
     return messages;
   }
 
+  /**
+   * Builds the message list handed to the agent loop: agent system prompt,
+   * recent conversation history, and the user's latest input.
+   */
+  private buildAgentMessages(userText: string): AiMessage[] {
+    const messages = this.buildContextMessages(this.buildAgentSystemPrompt());
+    const userMsg = new AiMessage();
+    userMsg.role = 'user';
+    userMsg.content = userText;
+    messages.push(userMsg);
+    return messages;
+  }
+
+  /**
+   * System prompt for the agent loop. Tool usage rules and the action-JSON
+   * protocol keep the model grounded in real learner data and let the UI
+   * turn "suggestions" into tap-through actions.
+   */
+  private buildAgentSystemPrompt(): string {
+    return `你是专业的教育学习助教"小智"，拥有以下工具，回答前按需调用：
+1. get_learning_stats：查询学生整体学习统计（考试、时长、成绩趋势、知识点掌握、课程进度、薄弱点与优势）。当学生问学习情况、薄弱环节、复习建议、学习计划时调用。
+2. get_exam_history：查询历次考试成绩。学生问成绩或成绩趋势时调用。
+3. get_course_progress：查询各课程学习进度。学生问课程进度或学习任务安排时调用。
+4. get_error_questions：查询错题本明细。学生问具体错题时调用。
+5. analyze_error_book：对错题本做智能归因并写回错题本。学生要求分析错题本或做错题归因时调用。
+6. generate_practice：根据薄弱知识点生成一组自适应练习题。学生想练习、刷题时调用。
+7. get_learner_profile：查询该学生的长期学习档案（跨会话记忆）。学生询问你对他/她的了解、历史分析结论，或需要结合历史情况回答时调用。
+
+工作规则：
+- 涉及学生个人学习数据的问题，必须先调用对应工具获取真实数据，严禁凭空编造成绩、课程、时长或错题。
+- 数据不足时如实说明，不要虚构。
+- 回答简洁、具体、可执行，多用真实数据说话，语气亲切鼓励。
+- 每个工具调用不要超过一次。
+- 学生的长期学习档案会以系统消息提供，回答时自然结合这些历史情况，避免重复询问已知信息。
+- 当你的建议包含"开始练习"且学生尚未练习时，在回答正文之后另起一行输出一行 JSON 指令：{"action":"start_practice"}；其余情况不要输出 JSON。`;
+  }
+
+  /**
+   * Detects the action JSON in the model reply, strips it from the visible
+   * content and stores it on the message so the UI can render a tap-through.
+   */
+  private extractAction(message: ChatMessage): void {
+    const idx = message.content.indexOf(ACTION_START_PRACTICE);
+    if (idx < 0) {
+      return;
+    }
+    message.action = 'start_practice';
+    const lineStart = message.content.lastIndexOf('\n', idx);
+    const lineEnd = message.content.indexOf('\n', idx);
+    if (lineStart >= 0 && lineEnd >= 0) {
+      message.content = message.content.substring(0, lineStart) + message.content.substring(lineEnd);
+    } else if (lineStart >= 0) {
+      message.content = message.content.substring(0, lineStart);
+    } else if (lineEnd >= 0) {
+      message.content = message.content.substring(lineEnd + 1);
+    } else {
+      message.content = message.content.replace(ACTION_START_PRACTICE, '');
+    }
+    message.content = message.content.trim();
+  }
+
+  /**
+   * Inserts a lightweight progress message while a tool is running. When the
+   * tool completes, the SAME message is updated in place (never duplicated)
+   * so the UI shows exactly one spinner per tool, then a checkmark.
+   */
+  private showStepMessage(stepText: string, isDone: boolean): void {
+    if (isDone && this.activeStepId !== '') {
+      const updated: ChatMessage[] = [];
+      for (const m of this.currentSession.messages) {
+        if (m.id === this.activeStepId) {
+          m.stepDone = true;
+        }
+        updated.push(m);
+      }
+      this.currentSession.messages = updated;
+      this.activeStepId = '';
+      this.notifyChange();
+      return;
+    }
+
+    const stepMsg = new ChatMessage(
+      this.generateMessageId(),
+      MessageRole.STEP,
+      stepText,
+      MessageStatus.SUCCESS,
+    );
+    stepMsg.stepDone = false;
+    this.activeStepId = stepMsg.id;
+    this.currentSession.messages = [...this.currentSession.messages, stepMsg];
+    this.notifyChange();
+  }
+
+  /**
+   * Maps agent failures to user-facing text. AgentLimitError and
+   * AgentTimeoutError keep their own messages; anything else shows a generic
+   * hint plus the raw error detail (temporarily, to ease debugging — remove
+   * the detail for release).
+   */
+  private buildErrorMessage(err: Object): string {
+    if (err instanceof AgentLimitError || err instanceof AgentTimeoutError) {
+      return (err as Error).message;
+    }
+    const errMsg = err instanceof Error ? err.message : 'Unknown error';
+    return `抱歉，我暂时无法回复你的问题。\n\n错误详情：${errMsg}`;
+  }
+
+  /** Persists sessions that contain at least one user message. */
+  private saveSessions(): void {
+    const meaningful = this.sessionList.filter((s: ChatSession) => {
+      for (let i = 0; i < s.messages.length; i++) {
+        if (s.messages[i].role === MessageRole.USER) {
+          return true;
+        }
+      }
+      return false;
+    });
+    this.sessionStore.saveSessions(meaningful);
+  }
+
   private buildAnalysisPrompt(data: LearningAnalysisData): string {
     let prompt = '请根据以下学习数据进行分析，给出详细的学习指导建议：\n\n';
 
-    prompt += `【考试情况】共参加 ${data.totalExams} 次考试，平均分 ${data.avgScore} 分。\n`;
+    if (data.totalExams > 0) {
+      prompt += `【考试情况】共参加 ${data.totalExams} 次考试，平均分 ${data.avgScore} 分。\n`;
+    } else {
+      prompt += '【考试情况】暂无真实考试记录，请不要推测或虚构成绩。\n';
+    }
+
+    if (data.totalStudyTime > 0) {
+      prompt += `【累计学习时长】${data.totalStudyTime} 分钟。\n`;
+    } else {
+      prompt += '【累计学习时长】暂无可靠记录。\n';
+    }
 
     if (data.scoreTrend.length > 0) {
       prompt += '成绩趋势：\n';
@@ -549,7 +798,7 @@ export class ChatViewModel {
     if (data.knowledgePoints.length > 0) {
       prompt += '\n【知识点掌握详情】\n';
       for (const kp of data.knowledgePoints) {
-        prompt += `  - ${kp.name}: 掌握度 ${kp.mastery}%（${kp.correct}/${kp.total}）\n`;
+        prompt += `  - ${kp.name}: 错题 ${kp.total} 道，基于错题频次估算掌握度 ${kp.mastery}%\n`;
       }
     }
 
@@ -561,6 +810,7 @@ export class ChatViewModel {
     }
 
     prompt += '\n请给出：\n1. 整体学习评估\n2. 薄弱环节分析\n3. 具体的学习建议\n4. 推荐的学习路径';
+    prompt += '\n必须只依据上述真实数据；数据不足时请明确说明，不得补造考试、课程或学习时长。';
 
     return prompt;
   }
@@ -568,7 +818,15 @@ export class ChatViewModel {
   private generateLocalAnalysisText(data: LearningAnalysisData): string {
     let text = '📊 **学习分析报告**\n\n';
 
-    text += `**考试情况：** 共参加 ${data.totalExams} 次考试，平均分 ${data.avgScore} 分。\n\n`;
+    if (data.totalExams > 0) {
+      text += `**考试情况：** 共参加 ${data.totalExams} 次考试，平均分 ${data.avgScore} 分。\n\n`;
+    } else {
+      text += '**考试情况：** 暂无真实考试记录。\n\n';
+    }
+
+    text += data.totalStudyTime > 0 ?
+      `**累计学习时长：** ${data.totalStudyTime} 分钟。\n\n` :
+      '**累计学习时长：** 暂无可靠记录。\n\n';
 
     if (data.scoreTrend.length > 0) {
       text += '**成绩趋势：**\n';
@@ -590,6 +848,12 @@ export class ChatViewModel {
     if (data.weakPoints.length > 0) {
       text += `1. 重点复习：${data.weakPoints[0]}，这是当前最需要加强的知识点。\n`;
       text += '2. 建议每天安排 30-60 分钟的专项练习时间。\n';
+    } else if (data.totalExams === 0 && data.knowledgePoints.length === 0) {
+      text += '1. 当前数据不足，建议先完成一次考试或练习，以便生成可靠分析。\n';
+      text += '2. 记录错题原因和课程进度，可提升后续建议的针对性。\n';
+    } else {
+      text += '1. 继续保持当前学习节奏，并定期用练习检验掌握情况。\n';
+      text += '2. 优先完成进度较低的课程，避免学习任务长期积压。\n';
     }
     text += '3. 定期进行模拟考试，检验学习效果。\n';
     text += '4. 关注课程学习进度，按时完成线上培训任务。\n';

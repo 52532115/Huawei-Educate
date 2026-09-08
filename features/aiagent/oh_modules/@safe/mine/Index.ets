@@ -33,6 +33,11 @@ export { MineAddErrorPage } from './src/main/ets/views/MineAddErrorPage';
 
 export { MineModiPersonPage } from './src/main/ets/views/MineModiPersonPage';
 
+// Learning data exports consumed by the AI analysis module. Keeping the
+// source in mine avoids maintaining a second, divergent course list.
+export { courseList as MineCourseList } from './src/main/ets/viewmodel/MineLocalData';
+export { MineCourseListModel } from './src/main/ets/viewmodel/MineCourseListModel';
+
 export { MineTrainPage } from './src/main/ets/views/MineTrainPage';
 
 

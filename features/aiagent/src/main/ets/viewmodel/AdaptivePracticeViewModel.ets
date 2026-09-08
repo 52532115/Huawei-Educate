@@ -5,6 +5,7 @@
 
 import { AdaptivePracticeService } from '../service/AdaptivePracticeService';
 import { ErrorAttributionService } from '../service/ErrorAttributionService';
+import { PracticeSessionStore } from '../service/PracticeSessionStore';
 import {
   AdaptivePracticeQuestion,
   AdaptivePracticeSession,
@@ -19,11 +20,16 @@ export class AdaptivePracticeViewModel {
   attributionUpdatedCount: number;
   private practiceService: AdaptivePracticeService;
   private attributionService: ErrorAttributionService;
+  private sessionStore: PracticeSessionStore;
 
   constructor() {
     this.practiceService = new AdaptivePracticeService();
     this.attributionService = new ErrorAttributionService();
-    this.session = this.practiceService.generateSession();
+    this.sessionStore = new PracticeSessionStore();
+    // Prefer a session handed over by the agent (e.g. "帮我出几道练习题"),
+    // otherwise generate one locally.
+    const pending = this.sessionStore.loadPendingSession();
+    this.session = pending ? pending : this.practiceService.generateSession();
     this.currentIndex = 0;
     this.isFinished = false;
     this.attributionUpdatedCount = 0;

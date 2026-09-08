@@ -1,0 +1,170 @@
+[
+  {
+    "group": "档案prompt",
+    "name": "空档案返回空串",
+    "status": "PASS",
+    "actual": "",
+    "expected": ""
+  },
+  {
+    "group": "档案prompt",
+    "name": "包含薄弱点",
+    "status": "PASS",
+    "actual": "【该学生的长期学习档案（跨会话记忆，来自本地真实数据与历史分析）】\n- 薄弱点：函数与极限、导数应用\n- 优势：三角函数\n- 成绩概况：共 3 次考试，平均 82 分，累计学习 450 分钟\n回答时自然地结合这些历史情况，避免重复询问已知信息。",
+    "expected": "weak points present"
+  },
+  {
+    "group": "档案prompt",
+    "name": "包含优势",
+    "status": "PASS",
+    "actual": "【该学生的长期学习档案（跨会话记忆，来自本地真实数据与历史分析）】\n- 薄弱点：函数与极限、导数应用\n- 优势：三角函数\n- 成绩概况：共 3 次考试，平均 82 分，累计学习 450 分钟\n回答时自然地结合这些历史情况，避免重复询问已知信息。",
+    "expected": "strength present"
+  },
+  {
+    "group": "档案prompt",
+    "name": "包含成绩概况",
+    "status": "PASS",
+    "actual": "【该学生的长期学习档案（跨会话记忆，来自本地真实数据与历史分析）】\n- 薄弱点：函数与极限、导数应用\n- 优势：三角函数\n- 成绩概况：共 3 次考试，平均 82 分，累计学习 450 分钟\n回答时自然地结合这些历史情况，避免重复询问已知信息。",
+    "expected": "exam stats present"
+  },
+  {
+    "group": "档案prompt",
+    "name": "包含累计时长",
+    "status": "PASS",
+    "actual": "【该学生的长期学习档案（跨会话记忆，来自本地真实数据与历史分析）】\n- 薄弱点：函数与极限、导数应用\n- 优势：三角函数\n- 成绩概况：共 3 次考试，平均 82 分，累计学习 450 分钟\n回答时自然地结合这些历史情况，避免重复询问已知信息。",
+    "expected": "study time present"
+  },
+  {
+    "group": "档案prompt",
+    "name": "薄弱点截断为8个",
+    "status": "PASS",
+    "actual": "【该学生的长期学习档案（跨会话记忆，来自本地真实数据与历史分析）】\n- 薄弱点：a1、a2、a3、a4、a5、a6、a7、a8\n- 优势：s1、s2、s3、s4、s5\n回答时自然地结合这些历史情况，避免重复询问已知信息。",
+    "expected": "clamped at 8"
+  },
+  {
+    "group": "档案prompt",
+    "name": "优势截断为5个",
+    "status": "PASS",
+    "actual": "【该学生的长期学习档案（跨会话记忆，来自本地真实数据与历史分析）】\n- 薄弱点：a1、a2、a3、a4、a5、a6、a7、a8\n- 优势：s1、s2、s3、s4、s5\n回答时自然地结合这些历史情况，避免重复询问已知信息。",
+    "expected": "clamped at 5"
+  },
+  {
+    "group": "关注主题",
+    "name": "去重合并",
+    "status": "PASS",
+    "actual": "【该学生的长期学习档案（跨会话记忆，来自本地真实数据与历史分析）】\n- 近期练习/关注主题：导数计算、极限证明\n回答时自然地结合这些历史情况，避免重复询问已知信息。",
+    "expected": "deduped"
+  },
+  {
+    "group": "关注主题",
+    "name": "上限6个",
+    "status": "PASS",
+    "actual": "【该学生的长期学习档案（跨会话记忆，来自本地真实数据与历史分析）】\n- 近期练习/关注主题：导数计算、极限证明、t1、t2、t3、t4\n回答时自然地结合这些历史情况，避免重复询问已知信息。",
+    "expected": "capped at 6"
+  },
+  {
+    "group": "分析摘要",
+    "name": "过短内容被忽略",
+    "status": "PASS",
+    "actual": 0,
+    "expected": 0
+  },
+  {
+    "group": "分析摘要",
+    "name": "单条截断为200字",
+    "status": "PASS",
+    "actual": 200,
+    "expected": 200
+  },
+  {
+    "group": "分析摘要",
+    "name": "只保留最近3条",
+    "status": "PASS",
+    "actual": "[\"导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重\",\"第三条分析结论，关于三角函数公式的掌握情况\",\"第四条分析结论，关于定积分计算的方法总结\"]",
+    "expected": "kept last 3"
+  },
+  {
+    "group": "分析摘要",
+    "name": "注入prompt含结论",
+    "status": "PASS",
+    "actual": "【该学生的长期学习档案（跨会话记忆，来自本地真实数据与历史分析）】\n- 近期分析结论：\n  1. 导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重要概念导数是重\n  2. 第三条分析结论，关于三角函数公式的掌握情况\n  3. 第四条分析结论，关于定积分计算的方法总结\n回答时自然地结合这些历史情况，避免重复询问已知信息。",
+    "expected": "summaries in prompt"
+  },
+  {
+    "group": "持久化",
+    "name": "重启后从文件恢复",
+    "status": "PASS",
+    "actual": "{\"weakPoints\":[\"回写弱点\"],\"strengths\":[],\"focusTopics\":[],\"examCount\":2,\"avgScore\":90,\"totalStudyTime\":60,\"analysisSummaries\":[],\"updatedAt\":1788881996596}",
+    "expected": "restored from file"
+  },
+  {
+    "group": "持久化",
+    "name": "损坏数据返回空档案不崩溃",
+    "status": "PASS",
+    "actual": "{\"weakPoints\":[],\"strengths\":[],\"focusTopics\":[],\"examCount\":0,\"avgScore\":0,\"totalStudyTime\":0,\"analysisSummaries\":[],\"updatedAt\":0}",
+    "expected": "empty profile"
+  },
+  {
+    "group": "重置",
+    "name": "clearProfile后档案为空",
+    "status": "PASS",
+    "actual": "{\"weakPoints\":[],\"strengths\":[],\"focusTopics\":[],\"examCount\":0,\"avgScore\":0,\"totalStudyTime\":0,\"analysisSummaries\":[],\"updatedAt\":0}",
+    "expected": "empty profile"
+  },
+  {
+    "group": "会话action",
+    "name": "重启后恢复且action保留",
+    "status": "PASS",
+    "actual": "[[{\"role\":\"user\"},{\"role\":\"ai\",\"action\":\"start_practice\"}]]",
+    "expected": "action survives restart"
+  },
+  {
+    "group": "会话action",
+    "name": "STEP消息不落盘",
+    "status": "PASS",
+    "actual": "[\"user\",\"ai\"]",
+    "expected": "no step messages"
+  },
+  {
+    "group": "工具定义",
+    "name": "共7个且包含get_learner_profile",
+    "status": "PASS",
+    "actual": "get_learning_stats,analyze_error_book,generate_practice,get_exam_history,get_course_progress,get_error_questions,get_learner_profile",
+    "expected": "7 tools with profile"
+  },
+  {
+    "group": "步骤文案",
+    "name": "get_learner_profile有文案",
+    "status": "PASS",
+    "actual": "正在读取你的学习档案…",
+    "expected": "label"
+  },
+  {
+    "group": "工具执行",
+    "name": "get_learning_stats返回分析JSON",
+    "status": "PASS",
+    "actual": "{\"totalExams\":4,\"avgScore\":78,\"totalStudyTime\":120,\"scoreTrend\":[],\"knowledgePoints\":[],\"courseProgress\":[],\"weakPoints\":[\"函数与极限\",\"导数应用\"],\"strengths\":[\"三角函数\"]}",
+    "expected": "has totalExams"
+  },
+  {
+    "group": "档案回写",
+    "name": "get_learning_stats后档案含薄弱点",
+    "status": "PASS",
+    "actual": "【该学生的长期学习档案（跨会话记忆，来自本地真实数据与历史分析）】\n- 薄弱点：函数与极限、导数应用\n- 优势：三角函数\n- 成绩概况：共 4 次考试，平均 78 分，累计学习 120 分钟\n回答时自然地结合这些历史情况，避免重复询问已知信息。",
+    "expected": "profile updated"
+  },
+  {
+    "group": "工具执行",
+    "name": "get_learner_profile返回档案字段",
+    "status": "PASS",
+    "actual": "{\"weakPoints\":[\"函数与极限\",\"导数应用\"],\"strengths\":[\"三角函数\"],\"focusTopics\":[],\"examCount\":4,\"avgScore\":78,\"totalStudyTime\":120,\"analysisSummaries\":[],\"message\":\"\"}",
+    "expected": "profile payload"
+  },
+  {
+    "group": "档案回写",
+    "name": "generate_practice后档案含练习主题",
+    "status": "PASS",
+    "actual": "【该学生的长期学习档案（跨会话记忆，来自本地真实数据与历史分析）】\n- 薄弱点：函数与极限、导数应用\n- 优势：三角函数\n- 近期练习/关注主题：导数计算、极限证明\n- 成绩概况：共 4 次考试，平均 78 分，累计学习 120 分钟\n回答时自然地结合这些历史情况，避免重复询问已知信息。",
+    "expected": "focus topics recorded"
+  }
+]

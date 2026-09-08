@@ -100,6 +100,13 @@ export struct AiChatView {
             .layoutWeight(1)
             .textAlign(TextAlign.Center);
 
+          Button('👤')
+            .fontSize(18)
+            .backgroundColor(Color.Transparent)
+            .onClick(() => {
+              this.pathStack.pushPathByName('LearnerProfileView', null);
+            });
+
           Text(`${this.sessionCount}`)
             .fontSize(10)
             .fontColor('#FFFFFF')
@@ -172,8 +179,21 @@ export struct AiChatView {
                       AnalysisCard({ analysisData: msg.analysisData });
                     }
                     if (msg.role === MessageRole.USER || msg.role === MessageRole.AI ||
-                        msg.role === MessageRole.ANALYSIS) {
+                        msg.role === MessageRole.ANALYSIS || msg.role === MessageRole.STEP) {
                       ChatBubble({ message: msg });
+                    }
+                    if (msg.role === MessageRole.AI && msg.action === 'start_practice') {
+                      Button('🚀 开始自适应练习')
+                        .fontSize(13)
+                        .fontColor('#FFFFFF')
+                        .backgroundColor('#7C3AED')
+                        .borderRadius(18)
+                        .height(36)
+                        .padding({ left: 16, right: 16 })
+                        .margin({ left: 12, top: 4, bottom: 8 })
+                        .onClick(() => {
+                          this.pathStack.pushPathByName('AdaptivePracticeView', null);
+                        });
                     }
                     if (msg.role === MessageRole.ANALYSIS && msg.content) {
                       Text('📋 以上为学习数据分析结果')
@@ -181,7 +201,7 @@ export struct AiChatView {
                         .textAlign(TextAlign.Center).width('100%').padding(4);
                     }
                   };
-                }, (msg: ChatMessage) => msg.id + '_' + msg.status + '_' + msg.content.length);
+                }, (msg: ChatMessage) => msg.id + '_' + msg.status + '_' + msg.content.length + (msg.stepDone ? '_done' : ''));
 
                 if (this.isReceiving) {
                   Row() {

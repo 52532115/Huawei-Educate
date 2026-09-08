@@ -14,6 +14,7 @@
  */
 
 import fileIo from '@ohos.file.fs';
+import { MineCourseList, MineCourseListModel } from '@safe/mine';
 import {
   LearningAnalysisData,
   LearningDataSnapshot,
@@ -26,26 +27,22 @@ import {
   KnowledgeStats,
 } from '../viewmodel/ChatModels';
 
+const EXAM_HISTORY_KEY = 'ExamHistory';
+const EXAM_HISTORY_FILE = '/examHistory.json';
+const COURSE_PROGRESS_KEY = 'CourseProgress';
+const COURSE_PROGRESS_FILE = '/courseProgress.json';
+const STUDY_TIME_KEY = 'TotalStudyTimeMinutes';
+const ERROR_STORE_KEY = 'ErrorQuestions';
+const ERROR_BOOK_FILE = '/errorBook.json';
+
 export class DataCollectService {
   collectAllData(): LearningDataSnapshot {
-    const emptyExamScores: ExamScoreItem[] = [];
-    const emptyErrorQuestions: ErrorQuestionItem[] = [];
-    const emptyCourseProgress: CourseProgressDataItem[] = [];
-
     const snapshot: LearningDataSnapshot = {
-      examScores: emptyExamScores,
-      errorQuestions: emptyErrorQuestions,
-      courseProgress: emptyCourseProgress,
+      examScores: [],
+      errorQuestions: [],
+      courseProgress: [],
       totalStudyTime: 0,
     };
-
-    try {
-      const scoreStr = AppStorage.get<string>('Score');
-      const timeStr = AppStorage.get<string>('Time');
-      const examCountStr = AppStorage.get<string>('ExamCount');
-    } catch (e) {
-      // AppStorage keys may not exist yet
-    }
 
     this.collectExamScores(snapshot);
     this.collectErrorQuestions(snapshot);
@@ -56,131 +53,144 @@ export class DataCollectService {
   }
 
   private collectExamScores(snapshot: LearningDataSnapshot): void {
-    try {
-      const score = AppStorage.get<number>('Score');
-      if (score !== undefined && score !== null) {
-        const item = new ExamScoreItem('最近考试', score, new Date().toISOString().split('T')[0]);
-        snapshot.examScores.push(item);
-      }
-    } catch (e) {
-      // Ignore if data not available
+    const historyJson = this.readStorageOrFile(EXAM_HISTORY_KEY, EXAM_HISTORY_FILE);
+    if (historyJson.length === 0) {
+      return;
     }
 
-    if (snapshot.examScores.length === 0) {
-      const mockScores: ExamScoreItem[] = [];
-      mockScores.push(new ExamScoreItem('第一次模拟考试', 65, '2026-04-15'));
-      mockScores.push(new ExamScoreItem('第二次模拟考试', 72, '2026-04-28'));
-      mockScores.push(new ExamScoreItem('第三次模拟考试', 78, '2026-05-10'));
+    try {
+      const parsed = JSON.parse(historyJson) as Array<Record<string, Object>>;
+      for (let i = 0; i < parsed.length; i++) {
+        const record = parsed[i];
+        const score = record['score'] as number;
+        if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 100) {
+          continue;
+        }
 
-      for (const s of mockScores) {
-        snapshot.examScores.push(s);
+        const name = (record['name'] as string) || `第 ${i + 1} 次考试`;
+        const date = (record['date'] as string) || '';
+        snapshot.examScores.push(new ExamScoreItem(name, Math.round(score), date));
       }
+      snapshot.examScores.sort((a: ExamScoreItem, b: ExamScoreItem) => a.date.localeCompare(b.date));
+    } catch (e) {
+      // Invalid history is treated as unavailable data, never replaced with mock scores.
     }
   }
 
   private collectErrorQuestions(snapshot: LearningDataSnapshot): void {
-    const LABELS: string[] = ['A', 'B', 'C', 'D', 'E', 'F'];
-
-    // Try reading real error questions from AppStorage
-    let errorJson = AppStorage.get<string>('ErrorQuestions');
-
-    // If AppStorage is empty, try loading from persistent file
-    if (!errorJson || errorJson.length === 0) {
-      const filesDir = AppStorage.get<string>('filesDir');
-      if (filesDir) {
-        try {
-          errorJson = fileIo.readTextSync(filesDir + '/errorBook.json');
-        } catch (e) {
-          // File doesn't exist
-        }
-      }
+    const labels: string[] = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const errorJson = this.readStorageOrFile(ERROR_STORE_KEY, ERROR_BOOK_FILE);
+    if (errorJson.length === 0) {
+      return;
     }
 
-    if (errorJson && errorJson.length > 0) {
-      try {
-        const parsed = JSON.parse(errorJson) as Array<Record<string, Object>>;
-        for (const eq of parsed) {
-          const title = (eq['title'] as string) || '';
-          const category = (eq['knowledgeTag'] as string) || '未分类';
-          const item = new ErrorQuestionItem(title, category);
-
-          // Read options
-          const options = eq['option'] as string[];
-          if (options) {
-            item.options = options;
-          }
-
-          // Read answer indices
-          const rightQues = eq['rightQues'] as number;
-          if (rightQues !== undefined && rightQues >= 0) {
-            item.correctIndex = rightQues;
-            item.correctLabel = rightQues < LABELS.length ? LABELS[rightQues] : String(rightQues);
-          }
-
-          const answer = eq['answer'] as number;
-          if (answer !== undefined && answer >= 0) {
-            item.userIndex = answer;
-            item.userLabel = answer < LABELS.length ? LABELS[answer] : String(answer);
-          }
-
-          // Read text fields
-          const note = eq['userNote'] as string;
-          if (note) {
-            item.userNote = note;
-          }
-          const reason = eq['mistakeReason'] as string;
-          if (reason) {
-            item.mistakeReason = reason;
-          }
-          const createTime = eq['createTime'] as number;
-          if (createTime) {
-            item.createTime = createTime;
-          }
-
-          snapshot.errorQuestions.push(item);
+    try {
+      const parsed = JSON.parse(errorJson) as Array<Record<string, Object>>;
+      for (const eq of parsed) {
+        const title = ((eq['title'] as string) || '').trim();
+        if (title.length === 0) {
+          continue;
         }
-        if (snapshot.errorQuestions.length > 0) {
-          return;
+
+        const category = ((eq['knowledgeTag'] as string) || '未分类').trim() || '未分类';
+        const item = new ErrorQuestionItem(title, category);
+        const options = eq['option'] as string[];
+        if (options) {
+          item.options = options;
         }
-      } catch (e) {
-        // Parse error — fall through
+
+        const rightQues = eq['rightQues'] as number;
+        if (typeof rightQues === 'number' && rightQues >= 0) {
+          item.correctIndex = rightQues;
+          item.correctLabel = rightQues < labels.length ? labels[rightQues] : String(rightQues);
+        }
+
+        const answer = eq['answer'] as number;
+        if (typeof answer === 'number' && answer >= 0) {
+          item.userIndex = answer;
+          item.userLabel = answer < labels.length ? labels[answer] : String(answer);
+        }
+
+        item.userNote = (eq['userNote'] as string) || '';
+        item.mistakeReason = (eq['mistakeReason'] as string) || '';
+        item.createTime = (eq['createTime'] as number) || 0;
+        snapshot.errorQuestions.push(item);
       }
+    } catch (e) {
+      // Invalid data is ignored so the UI can explicitly show that data is unavailable.
     }
-
-    // No data available — push a placeholder so the UI shows an appropriate message
-    // The caller (requestErrorBookAnalysis) will handle the empty case
   }
 
   private collectCourseProgress(snapshot: LearningDataSnapshot): void {
-    const mockCourses: CourseProgressDataItem[] = [];
-    mockCourses.push(new CourseProgressDataItem('高等数学（上）', 90, '刘教授'));
-    mockCourses.push(new CourseProgressDataItem('高等数学（下）', 85, '刘教授'));
-    mockCourses.push(new CourseProgressDataItem('线性代数', 75, '王教授'));
-    mockCourses.push(new CourseProgressDataItem('概率论与数理统计', 60, '陈教授'));
-    mockCourses.push(new CourseProgressDataItem('离散数学', 70, '张教授'));
-    mockCourses.push(new CourseProgressDataItem('程序设计基础（C语言）', 92, '李教授'));
-    mockCourses.push(new CourseProgressDataItem('面向对象程序设计（Java）', 82, '李教授'));
-    mockCourses.push(new CourseProgressDataItem('数据结构', 68, '张教授'));
-    mockCourses.push(new CourseProgressDataItem('算法设计与分析', 45, '张教授'));
-    mockCourses.push(new CourseProgressDataItem('计算机组成原理', 55, '周教授'));
-    mockCourses.push(new CourseProgressDataItem('操作系统', 80, '陈教授'));
-    mockCourses.push(new CourseProgressDataItem('计算机网络', 48, '吴教授'));
-    mockCourses.push(new CourseProgressDataItem('数据库系统原理', 72, '赵教授'));
-    mockCourses.push(new CourseProgressDataItem('编译原理', 38, '周教授'));
-    mockCourses.push(new CourseProgressDataItem('软件工程', 65, '孙教授'));
-    mockCourses.push(new CourseProgressDataItem('计算机组成原理', 78, '周教授'));
-    mockCourses.push(new CourseProgressDataItem('软件工程导论', 50, '吴教授'));
-    mockCourses.push(new CourseProgressDataItem('机器学习', 30, '吴教授'));
-    mockCourses.push(new CourseProgressDataItem('Web前端开发', 88, '黄教授'));
-    mockCourses.push(new CourseProgressDataItem('Linux系统管理', 70, '马教授'));
+    const progressMap = new Map<string, CourseProgressDataItem>();
+    const progressJson = this.readStorageOrFile(COURSE_PROGRESS_KEY, COURSE_PROGRESS_FILE);
 
-    for (const c of mockCourses) {
-      snapshot.courseProgress.push(c);
+    if (progressJson.length > 0) {
+      try {
+        const parsed = JSON.parse(progressJson) as Array<Record<string, Object>>;
+        for (const record of parsed) {
+          const name = ((record['name'] as string) || '').trim();
+          const progress = record['progress'] as number;
+          if (name.length === 0 || typeof progress !== 'number' || !Number.isFinite(progress)) {
+            continue;
+          }
+          const teacher = (record['teacher'] as string) || '';
+          progressMap.set(name, new CourseProgressDataItem(name, this.clampPercent(progress), teacher));
+        }
+      } catch (e) {
+        // Fall back to the current course data exported by the mine module.
+      }
     }
+
+    if (progressMap.size === 0) {
+      for (const course of MineCourseList as MineCourseListModel[]) {
+        const name = course.name.trim();
+        if (name.length === 0) {
+          continue;
+        }
+        const rawProgress = course.process <= 1 ? course.process * 100 : course.process;
+        progressMap.set(name, new CourseProgressDataItem(
+          name,
+          this.clampPercent(rawProgress),
+          course.tec,
+        ));
+      }
+    }
+
+    progressMap.forEach((item: CourseProgressDataItem) => {
+      snapshot.courseProgress.push(item);
+    });
   }
 
   private collectStudyTime(snapshot: LearningDataSnapshot): void {
-    snapshot.totalStudyTime = 1380;
+    try {
+      const storedMinutes = AppStorage.get<number>(STUDY_TIME_KEY);
+      if (typeof storedMinutes === 'number' && Number.isFinite(storedMinutes) && storedMinutes >= 0) {
+        snapshot.totalStudyTime = Math.round(storedMinutes);
+        return;
+      }
+    } catch (e) {
+      // Fall through and derive time from real exam history if available.
+    }
+
+    const historyJson = this.readStorageOrFile(EXAM_HISTORY_KEY, EXAM_HISTORY_FILE);
+    if (historyJson.length === 0) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(historyJson) as Array<Record<string, Object>>;
+      let totalDurationMs = 0;
+      for (const record of parsed) {
+        const duration = record['duration'] as number;
+        if (typeof duration === 'number' && Number.isFinite(duration) && duration > 0) {
+          totalDurationMs += duration;
+        }
+      }
+      snapshot.totalStudyTime = Math.round(totalDurationMs / 60000);
+    } catch (e) {
+      // Keep zero to represent that no trustworthy study-time data is available.
+    }
   }
 
   analyzeData(snapshot: LearningDataSnapshot): LearningAnalysisData {
@@ -195,73 +205,93 @@ export class DataCollectService {
     }
 
     const scoreTrend: ScoreTrendItem[] = [];
-    for (const s of snapshot.examScores) {
-      scoreTrend.push(new ScoreTrendItem(s.name, s.score, s.date));
+    for (const score of snapshot.examScores) {
+      scoreTrend.push(new ScoreTrendItem(score.name, score.score, score.date));
     }
 
     const knowledgeMap = new Map<string, KnowledgeStats>();
-    const categoryMap = new Map<string, string[]>();
-
-    for (const eq of snapshot.errorQuestions) {
-      if (!categoryMap.has(eq.category)) {
-        const emptyArr: string[] = [];
-        categoryMap.set(eq.category, emptyArr);
+    for (const errorQuestion of snapshot.errorQuestions) {
+      if (!knowledgeMap.has(errorQuestion.category)) {
+        knowledgeMap.set(errorQuestion.category, new KnowledgeStats(0, 0));
       }
-      const titles = categoryMap.get(eq.category)!;
-      titles.push(eq.title);
-
-      if (!knowledgeMap.has(eq.category)) {
-        knowledgeMap.set(eq.category, new KnowledgeStats(0, 0));
-      }
-      const kp = knowledgeMap.get(eq.category)!;
-      kp.total += 1;
+      const stats = knowledgeMap.get(errorQuestion.category)!;
+      stats.total += 1;
     }
 
     const knowledgePoints: KnowledgePoint[] = [];
-    const mapEntries: Array<[string, KnowledgeStats]> = [];
-    knowledgeMap.forEach((value: KnowledgeStats, key: string) => {
-      mapEntries.push([key, value]);
+    knowledgeMap.forEach((stats: KnowledgeStats, name: string) => {
+      // Only wrong-question counts are currently available. Use a transparent,
+      // deterministic diagnostic estimate instead of inventing correct answers.
+      const mastery = Math.max(20, 75 - Math.max(0, stats.total - 1) * 10);
+      knowledgePoints.push(new KnowledgePoint(name, mastery, stats.total, 0));
     });
-
-    for (let i = 0; i < mapEntries.length; i++) {
-      const name = mapEntries[i][0];
-      const stats = mapEntries[i][1];
-      const estimatedTotal = stats.total + 2 + Math.floor(Math.random() * 3);
-      const mastery = Math.round((stats.total / estimatedTotal) * 100);
-      const clampedMastery = Math.max(20, Math.min(100, 100 - mastery));
-      knowledgePoints.push(new KnowledgePoint(
-        name,
-        clampedMastery,
-        estimatedTotal,
-        estimatedTotal - stats.total,
-      ));
-    }
+    knowledgePoints.sort((a: KnowledgePoint, b: KnowledgePoint) => {
+      if (a.mastery !== b.mastery) {
+        return a.mastery - b.mastery;
+      }
+      return a.name.localeCompare(b.name);
+    });
 
     const weakPoints: string[] = [];
     const strengths: string[] = [];
-    for (const kp of knowledgePoints) {
-      if (kp.mastery < 60) {
-        weakPoints.push(kp.name);
-      } else if (kp.mastery >= 80) {
-        strengths.push(kp.name);
+    for (const knowledgePoint of knowledgePoints) {
+      if (knowledgePoint.mastery < 60) {
+        this.pushUnique(weakPoints, knowledgePoint.name);
       }
     }
 
     const courseProgress: CourseProgressItem[] = [];
-    for (const c of snapshot.courseProgress) {
-      courseProgress.push(new CourseProgressItem(c.name, c.progress, c.teacher));
+    for (const course of snapshot.courseProgress) {
+      courseProgress.push(new CourseProgressItem(course.name, course.progress, course.teacher));
+      if (course.progress < 60) {
+        this.pushUnique(weakPoints, course.name);
+      } else if (course.progress >= 85 && !knowledgeMap.has(course.name)) {
+        this.pushUnique(strengths, course.name);
+      }
     }
 
-    const result: LearningAnalysisData = {
+    return {
       totalExams: totalExams,
       avgScore: avgScore,
+      totalStudyTime: snapshot.totalStudyTime,
       scoreTrend: scoreTrend,
       knowledgePoints: knowledgePoints,
       courseProgress: courseProgress,
       weakPoints: weakPoints,
       strengths: strengths,
     };
+  }
 
-    return result;
+  private readStorageOrFile(storageKey: string, fileName: string): string {
+    let json = '';
+    try {
+      json = AppStorage.get<string>(storageKey) || '';
+    } catch (e) {
+      // AppStorage may not be initialized during preview or unit tests.
+    }
+
+    if (json.length > 0) {
+      return json;
+    }
+
+    try {
+      const filesDir = AppStorage.get<string>('filesDir');
+      if (filesDir) {
+        return fileIo.readTextSync(filesDir + fileName);
+      }
+    } catch (e) {
+      // Missing files represent unavailable data.
+    }
+    return '';
+  }
+
+  private clampPercent(value: number): number {
+    return Math.max(0, Math.min(100, Math.round(value)));
+  }
+
+  private pushUnique(values: string[], value: string): void {
+    if (values.indexOf(value) < 0) {
+      values.push(value);
+    }
   }
 }

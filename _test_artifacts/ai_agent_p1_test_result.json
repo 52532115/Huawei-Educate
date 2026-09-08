@@ -1,0 +1,210 @@
+[
+  {
+    "group": "意图路由",
+    "name": "\"帮我出几道极限题练练手\" -> practice",
+    "status": "PASS",
+    "actual": "practice",
+    "expected": "practice"
+  },
+  {
+    "group": "意图路由",
+    "name": "\"针对我的错题出几道练习题\" -> practice",
+    "status": "PASS",
+    "actual": "practice",
+    "expected": "practice"
+  },
+  {
+    "group": "意图路由",
+    "name": "\"开始一组自适应练习\" -> practice",
+    "status": "PASS",
+    "actual": "practice",
+    "expected": "practice"
+  },
+  {
+    "group": "意图路由",
+    "name": "\"帮我分析一下我的学习情况\" -> analytics",
+    "status": "PASS",
+    "actual": "analytics",
+    "expected": "analytics"
+  },
+  {
+    "group": "意图路由",
+    "name": "\"我最近考试中哪些知识点比较薄弱\" -> analytics",
+    "status": "PASS",
+    "actual": "analytics",
+    "expected": "analytics"
+  },
+  {
+    "group": "意图路由",
+    "name": "\"帮我详细分析我的错题本\" -> analytics",
+    "status": "PASS",
+    "actual": "analytics",
+    "expected": "analytics"
+  },
+  {
+    "group": "意图路由",
+    "name": "\"我的课程进度怎么样\" -> analytics",
+    "status": "PASS",
+    "actual": "analytics",
+    "expected": "analytics"
+  },
+  {
+    "group": "意图路由",
+    "name": "\"什么是导数\" -> chat",
+    "status": "PASS",
+    "actual": "chat",
+    "expected": "chat"
+  },
+  {
+    "group": "意图路由",
+    "name": "\"你好呀\" -> chat",
+    "status": "PASS",
+    "actual": "chat",
+    "expected": "chat"
+  },
+  {
+    "group": "意图路由",
+    "name": "\"如何提高考试成绩\" -> analytics",
+    "status": "PASS",
+    "actual": "analytics",
+    "expected": "analytics"
+  },
+  {
+    "group": "历史摘要",
+    "name": "包含用户问题要点",
+    "status": "PASS",
+    "actual": "【早前对话要点】以下是更早对话中用户问过的问题摘要，供你参考背景：\n- 什么是极限？\n- 帮我分析一下我的学习情况\n",
+    "expected": "contains both questions"
+  },
+  {
+    "group": "历史摘要",
+    "name": "不包含 AI 回复内容",
+    "status": "PASS",
+    "actual": "【早前对话要点】以下是更早对话中用户问过的问题摘要，供你参考背景：\n- 什么是极限？\n- 帮我分析一下我的学习情况\n",
+    "expected": "no AI content"
+  },
+  {
+    "group": "历史摘要",
+    "name": "空输入返回空串",
+    "status": "PASS",
+    "actual": "",
+    "expected": ""
+  },
+  {
+    "group": "历史摘要",
+    "name": "超长问题被截断",
+    "status": "PASS",
+    "actual": "【早前对话要点】以下是更早对话中用户问过的问题摘要，供你参考背景：\n- 这是一个特别特别长的问题用来测试摘要截断这是一个特别特别长的…\n",
+    "expected": "truncated"
+  },
+  {
+    "group": "练习交接",
+    "name": "会话往返保存/加载",
+    "status": "PASS",
+    "actual": {
+      "id": "practice_test_1",
+      "questions": [
+        {
+          "id": "q1",
+          "title": "极限题",
+          "options": [
+            "A",
+            "B"
+          ],
+          "correctIndex": 0,
+          "knowledgeTag": "函数与极限",
+          "difficulty": "基础",
+          "source": "src",
+          "explanation": "解析",
+          "recommendation": "建议",
+          "selectedIndex": -1,
+          "isSubmitted": false,
+          "syncedToErrorBook": false
+        },
+        {
+          "id": "q2",
+          "title": "积分题",
+          "options": [
+            "A",
+            "B"
+          ],
+          "correctIndex": 1,
+          "knowledgeTag": "不定积分",
+          "difficulty": "进阶",
+          "source": "src",
+          "explanation": "解析",
+          "recommendation": "建议",
+          "selectedIndex": -1,
+          "isSubmitted": false,
+          "syncedToErrorBook": false
+        }
+      ],
+      "profiles": [
+        {
+          "tag": "函数与极限",
+          "errorCount": 2,
+          "mastery": 55,
+          "priority": 90,
+          "reason": "错题集中出现"
+        },
+        {
+          "tag": "不定积分",
+          "errorCount": 1,
+          "mastery": 68,
+          "priority": 70,
+          "reason": "课程进度低"
+        }
+      ]
+    },
+    "expected": "session"
+  },
+  {
+    "group": "练习交接",
+    "name": "题目数量正确",
+    "status": "PASS",
+    "actual": 2,
+    "expected": 2
+  },
+  {
+    "group": "练习交接",
+    "name": "题目字段完整",
+    "status": "PASS",
+    "actual": "{\"id\":\"q1\",\"title\":\"极限题\",\"options\":[\"A\",\"B\"],\"correctIndex\":0,\"knowledgeTag\":\"函数与极限\",\"difficulty\":\"基础\",\"source\":\"src\",\"explanation\":\"解析\",\"recommendation\":\"建议\",\"selectedIndex\":-1,\"isSubmitted\":false,\"syncedToErrorBook\":false}",
+    "expected": "q1 intact"
+  },
+  {
+    "group": "练习交接",
+    "name": "难度枚举恢复",
+    "status": "PASS",
+    "actual": "进阶",
+    "expected": "进阶"
+  },
+  {
+    "group": "练习交接",
+    "name": "profile 恢复",
+    "status": "PASS",
+    "actual": "[{\"tag\":\"函数与极限\",\"errorCount\":2,\"mastery\":55,\"priority\":90,\"reason\":\"错题集中出现\"},{\"tag\":\"不定积分\",\"errorCount\":1,\"mastery\":68,\"priority\":70,\"reason\":\"课程进度低\"}]",
+    "expected": "profiles intact"
+  },
+  {
+    "group": "练习交接",
+    "name": "一次性消费(再取为 null)",
+    "status": "PASS",
+    "actual": null,
+    "expected": "null"
+  },
+  {
+    "group": "练习交接",
+    "name": "无数据返回 null",
+    "status": "PASS",
+    "actual": null,
+    "expected": "null"
+  },
+  {
+    "group": "练习交接",
+    "name": "损坏数据返回 null",
+    "status": "PASS",
+    "actual": null,
+    "expected": "null"
+  }
+]

@@ -33,6 +33,7 @@ export class AnalysisViewModel {
     this.analysisData = {
       totalExams: 0,
       avgScore: 0,
+      totalStudyTime: 0,
       scoreTrend: [],
       knowledgePoints: [],
       courseProgress: [],

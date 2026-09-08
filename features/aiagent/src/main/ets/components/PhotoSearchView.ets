@@ -478,9 +478,9 @@ export struct PhotoSearchView {
     userMsg.content = `请解析这道题：\n${question}`;
 
     let fullAnswer = '';
-    await this.aiService.sendChatMessage([sysMsg, userMsg], (chunk: string) => {
-      fullAnswer = chunk;
-      this.aiAnswer = chunk;
+    await this.aiService.chatStream([sysMsg, userMsg], (chunk: string) => {
+      fullAnswer += chunk;
+      this.aiAnswer = fullAnswer;
     });
 
     return fullAnswer.length > 0 ? fullAnswer : 'AI 暂未返回解析结果，请稍后重试。';

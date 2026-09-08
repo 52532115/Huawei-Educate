@@ -32,7 +32,24 @@ export struct ChatBubble {
             .margin({ bottom: 2 });
         }
 
-        if (this.message.content) {
+        if (this.message.role === MessageRole.STEP) {
+          Row({ space: 6 }) {
+            if (this.message.stepDone) {
+              Text('✓')
+                .fontSize(12)
+                .fontColor('#10B981');
+            } else {
+              LoadingProgress()
+                .width(12)
+                .height(12)
+                .color('#6B7280');
+            }
+            Text(this.message.content)
+              .fontSize(12)
+              .fontColor(this.message.stepDone ? '#10B981' : '#6B7280');
+          }
+          .padding(8);
+        } else if (this.message.content) {
           Text(this.message.content)
             .fontSize(14)
             .fontColor(this.message.role === MessageRole.USER ? '#FFFFFF' : '#333333')
@@ -53,16 +70,18 @@ export struct ChatBubble {
             .maxLines(999);
         }
 
-        Text(this.formatTime(this.message.timestamp))
-          .fontSize(10)
-          .fontColor(this.message.role === MessageRole.USER ? 'rgba(255,255,255,0.7)' : '#AAAAAA')
-          .margin({ top: 4 });
+        if (this.message.role !== MessageRole.STEP) {
+          Text(this.formatTime(this.message.timestamp))
+            .fontSize(10)
+            .fontColor(this.message.role === MessageRole.USER ? 'rgba(255,255,255,0.7)' : '#AAAAAA')
+            .margin({ top: 4 });
+        }
       }
-      .padding(12)
+      .padding(this.message.role === MessageRole.STEP ? 0 : 12)
       .borderRadius(12)
       .backgroundColor(this.getBubbleColor())
       .border({
-        width: this.message.role === MessageRole.USER ? 0 : 1,
+        width: this.message.role === MessageRole.USER || this.message.role === MessageRole.STEP ? 0 : 1,
         color: this.message.role === MessageRole.USER ? '' : '#E5E7EB',
       })
       .constraintSize({ maxWidth: '75%' });
@@ -83,6 +102,8 @@ export struct ChatBubble {
         return '#F0F9FF';
       case MessageRole.AI:
         return '#FFFFFF';
+      case MessageRole.STEP:
+        return 'transparent';
       default:
         return '#F3F4F6';
     }

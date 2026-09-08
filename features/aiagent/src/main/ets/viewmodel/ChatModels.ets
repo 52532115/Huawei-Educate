@@ -18,6 +18,7 @@ export enum MessageRole {
   AI = 'ai',
   SYSTEM = 'system',
   ANALYSIS = 'analysis',
+  STEP = 'step',
 }
 
 export enum MessageStatus {
@@ -33,6 +34,10 @@ export class ChatMessage {
   timestamp: number;
   status: MessageStatus;
   analysisData?: LearningAnalysisData;
+  /** UI action hint extracted from the model reply, e.g. 'start_practice'. */
+  action?: string;
+  /** True once a transient step message has completed (renders a checkmark). */
+  stepDone?: boolean;
 
   constructor(
     id: string,
@@ -70,6 +75,8 @@ export class ChatSession {
 export interface LearningAnalysisData {
   totalExams: number;
   avgScore: number;
+  /** Verified accumulated learning time in minutes. */
+  totalStudyTime: number;
   scoreTrend: ScoreTrendItem[];
   knowledgePoints: KnowledgePoint[];
   courseProgress: CourseProgressItem[];
@@ -115,12 +122,31 @@ export class CourseProgressItem {
   }
 }
 
+/** OpenAI-style tool schema entry sent in the request body. */
+export interface ApiToolSchema {
+  type: string;
+  function: ApiToolFunctionSchema;
+}
+
+export interface ApiToolFunctionSchema {
+  name: string;
+  description: string;
+  parameters: ApiToolParameters;
+}
+
+export interface ApiToolParameters {
+  type: string;
+}
+
 export class AiApiRequest {
   model: string;
   messages: AiMessage[];
   stream: boolean;
   temperature?: number;
   max_tokens?: number;
+  /** OpenAI-style tools array. The API expects a real array, not a string. */
+  tools?: ApiToolSchema[];
+  tool_choice?: string;
 
   constructor(model: string, messages: AiMessage[], stream: boolean) {
     this.model = model;
@@ -129,9 +155,28 @@ export class AiApiRequest {
   }
 }
 
+export class AiToolCall {
+  id: string = '';
+  type: string = 'function';
+  function: AiToolCallFunction = new AiToolCallFunction();
+}
+
+export class AiToolCallFunction {
+  name: string = '';
+  /** JSON string of the tool arguments as sent by the model. */
+  arguments: string = '';
+}
+
+export class AiResponseResult {
+  content: string = '';
+  toolCalls: AiToolCall[] = [];
+}
+
 export class AiMessage {
   role: string = '';
   content: string = '';
+  tool_calls?: AiToolCall[];
+  tool_call_id?: string;
 }
 
 export class AiChoiceMessage {
