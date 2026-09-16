@@ -14,6 +14,7 @@
  */
 
 import { AiService } from './AiService';
+import { AgentTraceLogger } from './AgentTraceLogger';
 import {
   AgentToolRegistry,
   ToolErrorResult,
@@ -58,12 +59,18 @@ export class AgentService {
   private aiService: AiService = new AiService();
   private toolRegistry: AgentToolRegistry = new AgentToolRegistry();
   private executedTools: Set<string> = new Set();
+  private trace: AgentTraceLogger = new AgentTraceLogger();
+  private cancelledByUser: boolean = false;
 
   async run(
     messages: AiMessage[],
     onStep: (stepText: string, isDone: boolean) => void,
     onChunk: (chunk: string) => void,
   ): Promise<void> {
+    this.cancelledByUser = false;
+    const startTime = Date.now();
+    this.trace.log(`agent run start: ${messages.length} messages`);
+
     const timeoutPromise = new Promise<void>((resolve, reject) => {
       setTimeout(() => {
         reject(new AgentTimeoutError());
@@ -72,19 +79,25 @@ export class AgentService {
 
     try {
       await Promise.race([this.runInternal(messages, onStep, onChunk), timeoutPromise]);
+      this.trace.log(`agent run done: ${Date.now() - startTime}ms`);
     } catch (err) {
       if (err instanceof AgentTimeoutError) {
         this.cancel();
+        this.trace.log(`agent run timeout after ${Date.now() - startTime}ms`);
         throw err;
       }
       if (err instanceof AgentLimitError) {
+        this.trace.log(`agent run exceeded ${MAX_AGENT_ROUNDS} rounds (${Date.now() - startTime}ms)`);
         throw err;
       }
+      const errMsg = err instanceof Error ? err.message : 'Unknown error';
+      this.trace.log(`agent run failed: ${errMsg} (${Date.now() - startTime}ms)`);
       throw err instanceof Error ? err : new Error('Unknown agent error');
     }
   }
 
   cancel(): void {
+    this.cancelledByUser = true;
     this.aiService.cancelRequest();
   }
 
@@ -95,6 +108,7 @@ export class AgentService {
   ): Promise<void> {
     const working = this.copyMessages(messages);
     this.executedTools.clear();
+    const startTime = Date.now();
 
     for (let round = 0; round < MAX_AGENT_ROUNDS; round++) {
       let result: AiResponseResult;
@@ -102,14 +116,20 @@ export class AgentService {
         result = await this.aiService.chat(working, buildToolDefinitions(), TOOL_ROUND_MAX_TOKENS);
       } catch (err) {
         const cause = err instanceof Error ? err : new Error('Agent tool call failed');
+        if (this.cancelledByUser) {
+          // The user pressed stop: never auto-retry or fall back after that.
+          throw new Error('Request cancelled');
+        }
         if (round === 0) {
           // The tools call may fail if the API rejects function calling.
           // Fall back to a plain (non-streaming) conversation so the tutor
           // always remains usable even when streaming or tools are broken.
           Logger.error(`Agent tool call failed, falling back to plain chat: ${cause.message}`);
+          this.trace.log(`tool call failed, falling back to plain chat: ${cause.message}`);
           const plain = await this.aiService.chat(working);
           if (plain.content.length > 0) {
             onChunk(plain.content);
+            this.trace.log(`plain fallback delivered: ${plain.content.length} chars, total ${Date.now() - startTime}ms`);
             return;
           }
         }
@@ -117,12 +137,14 @@ export class AgentService {
       }
 
       Logger.info(`[Agent] round ${round}: ${result.toolCalls.length} tool calls, ${result.content.length} content chars`);
+      this.trace.log(`round ${round}: ${result.toolCalls.length} tool calls, ${result.content.length} content chars`);
       if (result.toolCalls.length > 0) {
-        await this.applyToolCalls(working, result, onStep);
+        await this.applyToolCalls(working, result, onStep, round);
         continue;
       }
 
-      await this.deliverFinalAnswer(working, onChunk);
+      const delivered = await this.deliverFinalAnswer(working, onChunk);
+      this.trace.log(`final answer delivered: ${delivered} chars, ${round} rounds, total ${Date.now() - startTime}ms`);
       return;
     }
 
@@ -136,17 +158,22 @@ export class AgentService {
    * dataReceive), the shared fallback path in AiService switches to a plain
    * non-streaming call so the user always gets a reply.
    */
-  private async deliverFinalAnswer(working: AiMessage[], onChunk: (chunk: string) => void): Promise<void> {
+  private async deliverFinalAnswer(working: AiMessage[], onChunk: (chunk: string) => void): Promise<number> {
+    if (this.cancelledByUser) {
+      throw new Error('Request cancelled');
+    }
     const delivered = await this.aiService.chatWithFallback(working, onChunk);
     if (delivered === 0) {
       throw new Error('AI 未返回有效回答，请稍后重试。');
     }
+    return delivered;
   }
 
   private async applyToolCalls(
     messages: AiMessage[],
     result: AiResponseResult,
     onStep: (stepText: string, isDone: boolean) => void,
+    round: number,
   ): Promise<void> {
     messages.push(buildToolCallsMessage(result.toolCalls));
 
@@ -156,12 +183,14 @@ export class AgentService {
       const stepLabel = getToolStepLabel(toolName);
       onStep(stepLabel, false);
 
+      const toolStart = Date.now();
       let toolResult: string;
       if (this.executedTools.has(toolName)) {
         // Force convergence: never run the same tool twice in one agent run.
         const dedupe = new ToolErrorResult();
         dedupe.error = `工具 ${toolName} 已执行过，请基于已有数据直接作答，不要再调用工具。`;
         toolResult = JSON.stringify(dedupe);
+        this.trace.log(`tool ${toolName} skipped (dedupe), round ${round}`);
       } else {
         this.executedTools.add(toolName);
         try {
@@ -173,6 +202,7 @@ export class AgentService {
           toolError.error = `工具 ${toolName} 执行失败：${errMsg}`;
           toolResult = JSON.stringify(toolError);
         }
+        this.trace.log(`tool ${toolName} done: ${Date.now() - toolStart}ms, ${toolResult.length} chars, round ${round}`);
       }
       Logger.info(`[Agent] tool ${toolName} result: ${toolResult.length} chars`);
       messages.push(buildToolResultMessage(call.id, toolResult));

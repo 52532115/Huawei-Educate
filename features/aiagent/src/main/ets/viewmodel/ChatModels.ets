@@ -209,6 +209,8 @@ export class ExamScoreItem {
 }
 
 export class ErrorQuestionItem {
+  /** Id of the underlying error-book record; '' when the record has none. */
+  id: string;
   title: string;
   category: string;
   options: string[];
@@ -219,8 +221,15 @@ export class ErrorQuestionItem {
   userNote: string;
   mistakeReason: string;
   createTime: number;
+  /** Attribution conclusion written back by ErrorAttributionService; '' when absent. */
+  analysis: string;
+  /** How many times this mistake has been re-answered incorrectly (>= 1 once tracked). */
+  wrongCount: number;
+  /** Last time the learner reviewed this mistake; 0 when never reviewed. */
+  lastReviewTime: number;
 
-  constructor(title: string, category: string) {
+  constructor(title: string, category: string, id: string = '') {
+    this.id = id;
     this.title = title;
     this.category = category;
     this.options = [];
@@ -231,6 +240,9 @@ export class ErrorQuestionItem {
     this.userNote = '';
     this.mistakeReason = '';
     this.createTime = 0;
+    this.analysis = '';
+    this.wrongCount = 0;
+    this.lastReviewTime = 0;
   }
 }
 

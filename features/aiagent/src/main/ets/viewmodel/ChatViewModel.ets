@@ -22,7 +22,7 @@ import {
   AiMessage,
   ErrorQuestionItem,
 } from './ChatModels';
-import { AiService } from '../service/AiService';
+import { AiService, ApiKeyMissingError } from '../service/AiService';
 import { AgentService, AgentLimitError, AgentTimeoutError } from '../service/AgentService';
 import { SessionStore } from '../service/SessionStore';
 import { DataCollectService } from '../service/DataCollectService';
@@ -51,8 +51,13 @@ export class ChatViewModel {
   private contextCompressor: ContextCompressor;
   private profileStore: LearnerProfileStore;
   private messageIdCounter: number;
+  private sessionIdCounter: number;
   private activeStepId: string = '';
   private onStateChange?: () => void;
+  /** Bumped on every send/cancel so a stale run can't clobber newer state. */
+  private runSeq: number = 0;
+  /** True when the user pressed the stop button for the in-flight run. */
+  private userCancelled: boolean = false;
 
   constructor() {
     this.aiService = new AiService();
@@ -63,6 +68,7 @@ export class ChatViewModel {
     this.profileStore = new LearnerProfileStore();
     this.sessionList = [];
     this.messageIdCounter = 0;
+    this.sessionIdCounter = 0;
     this.isLoading = false;
     this.isStreaming = false;
     this.inputText = '';
@@ -89,7 +95,11 @@ export class ChatViewModel {
   }
 
   private createNewSession(): ChatSession {
-    const id = `session_${Date.now()}`;
+    // Counter suffix keeps ids unique even when sessions are created within
+    // the same millisecond (fast taps), otherwise switching/deleting would
+    // address the wrong session.
+    this.sessionIdCounter += 1;
+    const id = `session_${Date.now()}_${this.sessionIdCounter}`;
     return new ChatSession(id, '新对话');
   }
 
@@ -148,6 +158,9 @@ export class ChatViewModel {
     if (text.trim() === '' || this.isLoading) {
       return;
     }
+    this.userCancelled = false;
+    this.runSeq += 1;
+    const runId = this.runSeq;
 
     const userMessage = new ChatMessage(
       this.generateMessageId(),
@@ -184,16 +197,52 @@ export class ChatViewModel {
         await this.runAgentChat(text.trim(), aiMessage);
       }
     } catch (err) {
-      Logger.error(`[ChatViewModel] send failed (${intent}): ${err instanceof Error ? err.message : err}`);
-      aiMessage.content = this.buildErrorMessage(err);
-      aiMessage.status = MessageStatus.FAILED;
+      if (this.userCancelled) {
+        // The pending bubble was already dropped by cancelRequest().
+        Logger.info(`[ChatViewModel] send cancelled by user (${intent})`);
+      } else {
+        Logger.error(`[ChatViewModel] send failed (${intent}): ${err instanceof Error ? err.message : err}`);
+        aiMessage.content = this.buildErrorMessage(err);
+        aiMessage.status = MessageStatus.FAILED;
+      }
     } finally {
-      this.isLoading = false;
-      this.isStreaming = false;
-      this.currentSession.updateTime = Date.now();
-      this.saveSessions();
-      this.notifyChange();
+      if (this.runSeq === runId) {
+        this.isLoading = false;
+        this.isStreaming = false;
+        this.currentSession.updateTime = Date.now();
+        this.saveSessions();
+        this.notifyChange();
+      }
     }
+  }
+
+  /**
+   * Stops the in-flight request (user pressed the stop button). The pending
+   * SENDING bubble is dropped so the user never sees a fake error for their
+   * own cancellation. runSeq is bumped so the stale run's finally block does
+   * not clobber the state of whatever the user starts next.
+   */
+  cancelRequest(): void {
+    if (!this.isLoading) {
+      return;
+    }
+    this.userCancelled = true;
+    this.runSeq += 1;
+    this.aiService.cancelRequest();
+    this.agentService.cancel();
+
+    const kept: ChatMessage[] = [];
+    for (const m of this.currentSession.messages) {
+      if (m.status !== MessageStatus.SENDING) {
+        kept.push(m);
+      }
+    }
+    this.currentSession.messages = kept;
+    this.isLoading = false;
+    this.isStreaming = false;
+    this.currentSession.updateTime = Date.now();
+    this.saveSessions();
+    this.notifyChange();
   }
 
   /** PRACTICE intent: generate locally, hand off to the practice page, no API call. */
@@ -745,7 +794,8 @@ export class ChatViewModel {
    * the detail for release).
    */
   private buildErrorMessage(err: Object): string {
-    if (err instanceof AgentLimitError || err instanceof AgentTimeoutError) {
+    if (err instanceof AgentLimitError || err instanceof AgentTimeoutError ||
+      err instanceof ApiKeyMissingError) {
       return (err as Error).message;
     }
     const errMsg = err instanceof Error ? err.message : 'Unknown error';
