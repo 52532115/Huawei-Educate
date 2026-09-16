@@ -14,6 +14,19 @@ function check(group, name, condition, actual, expected) {
   if (!condition) failures++;
 }
 
+/**
+ * Wall-clock values are masked in reported values only. They vary by machine
+ * load (elapsed ms) or by the moment of the run (session ids, trace stamps), so
+ * leaving them in turns a stable result file into per-run noise. The assertions
+ * themselves still run against the real values.
+ */
+function maskElapsed(text) {
+  return typeof text === 'string' ? text.replace(/\d+ms/g, '<ms>') : text;
+}
+function maskSessionId(id) {
+  return typeof id === 'string' ? id.replace(/^session_\d+_/, 'session_<ts>_') : id;
+}
+
 function transpileArkTs(relativePath) {
   const filePath = path.join(root, relativePath);
   let source = fs.readFileSync(filePath, 'utf8');
@@ -84,13 +97,22 @@ const traceMod = loadArkTs(
 );
 const tracer = new traceMod.AgentTraceLogger();
 
+// Every line carries a wall-clock prefix, which is the point of the logger — but
+// it also means the raw file text changes on every run. Reporting it verbatim
+// would rewrite the result file each time and turn a stable artifact into
+// per-run noise, so the stamp is masked in the reported value. The assertions
+// themselves still run against the unstamped-in-spirit real text.
+function maskTraceTimestamps(text) {
+  return text.replace(/\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]/g, '[timestamp]');
+}
+
 tracer.log('tool get_learning_stats done: 12ms');
 const traceText = fileMap.get('/tmp/p3test/agentTrace.log') || '';
-check('轨迹日志', '写入文件且带时间戳前缀', traceText.indexOf('[20') >= 0 && traceText.indexOf('tool get_learning_stats done: 12ms') >= 0, traceText, 'timestamped line');
+check('轨迹日志', '写入文件且带时间戳前缀', traceText.indexOf('[20') >= 0 && traceText.indexOf('tool get_learning_stats done: 12ms') >= 0, maskTraceTimestamps(traceText), 'timestamped line');
 
 tracer.log('round 1: 2 tool calls');
 check('轨迹日志', '追加写入不覆盖', traceText !== fileMap.get('/tmp/p3test/agentTrace.log') &&
-  fileMap.get('/tmp/p3test/agentTrace.log').indexOf('round 1: 2 tool calls') >= 0, fileMap.get('/tmp/p3test/agentTrace.log'), 'appended');
+  fileMap.get('/tmp/p3test/agentTrace.log').indexOf('round 1: 2 tool calls') >= 0, maskTraceTimestamps(fileMap.get('/tmp/p3test/agentTrace.log')), 'appended');
 
 // File too large -> next write truncates and only the new line remains.
 const bigPath = '/tmp/p3test/agentTrace.log';
@@ -230,7 +252,7 @@ svcC.cancel();
 await runPromise;
 check('Agent取消', '取消后以Request cancelled终止', rejectedMsg === 'Request cancelled', rejectedMsg, 'Request cancelled');
 check('Agent取消', '取消后不触发plain降级/不发起新请求', svcC.aiService.chatCalls === 1 && svcC.aiService.fallbackCalls === 0, { chatCalls: svcC.aiService.chatCalls, fallbackCalls: svcC.aiService.fallbackCalls }, 'no extra calls');
-check('Agent取消', '轨迹记录run failed', global.traceLines.some(l => l.indexOf('agent run failed: Request cancelled') >= 0), JSON.stringify(global.traceLines), 'cancel traced');
+check('Agent取消', '轨迹记录run failed', global.traceLines.some(l => l.indexOf('agent run failed: Request cancelled') >= 0), maskElapsed(JSON.stringify(global.traceLines)), 'cancel traced');
 
 // ---------- Part 3: ChatViewModel.cancelRequest ----------
 global.aiServiceInstances = [];
@@ -363,10 +385,10 @@ const chatVmMod = loadArkTs(
   check('会话管理', 'newSession创建第二个会话', vm.sessionList.length === 2 && vm.currentSession.id !== firstId, vm.sessionList.length, 2);
   const secondId = vm.currentSession.id;
   vm.switchSession(firstId);
-  check('会话管理', 'switchSession切换回第一个', vm.currentSession.id === firstId, vm.currentSession.id, firstId);
+  check('会话管理', 'switchSession切换回第一个', vm.currentSession.id === firstId, maskSessionId(vm.currentSession.id), maskSessionId(firstId));
   const beforeDelete = global.saveCalls.length;
   vm.deleteSession(firstId);
-  check('会话管理', 'deleteSession移除并落到剩余会话', vm.sessionList.length === 1 && vm.currentSession.id === secondId, { count: vm.sessionList.length, current: vm.currentSession.id }, 'one left');
+  check('会话管理', 'deleteSession移除并落到剩余会话', vm.sessionList.length === 1 && vm.currentSession.id === secondId, { count: vm.sessionList.length, current: maskSessionId(vm.currentSession.id) }, 'one left');
   check('会话管理', '删除后触发持久化', global.saveCalls.length === beforeDelete + 1, global.saveCalls, 'saved once');
 }
 

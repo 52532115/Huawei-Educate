@@ -128,7 +128,15 @@ global.AppStorage.data.clear(); // simulate app restart: only the file remains
 global.AppStorage.setOrCreate('filesDir', '/tmp/p2test');
 const store2 = new storeMod.LearnerProfileStore();
 const restored = store2.loadProfile();
-check('持久化', '重启后从文件恢复', restored.weakPoints.length === 1 && restored.weakPoints[0] === '回写弱点' && restored.examCount === 2, JSON.stringify(restored), 'restored from file');
+// `updatedAt` is deliberately kept out of the reported value: it is a wall-clock
+// stamp, so putting the whole profile into `actual` would rewrite the result file
+// on every run and turn a stable artifact into per-run noise. What matters is
+// that the data came back and the timestamp is real rather than 0.
+check('持久化', '重启后从文件恢复',
+  restored.weakPoints.length === 1 && restored.weakPoints[0] === '回写弱点' &&
+  restored.examCount === 2 && restored.updatedAt > 0,
+  { weakPoints: restored.weakPoints, examCount: restored.examCount, hasUpdatedAt: restored.updatedAt > 0 },
+  { weakPoints: ['回写弱点'], examCount: 2, hasUpdatedAt: true });
 global.AppStorage.data.set('LearnerProfile', 'not-json{{{');
 const corrupt = store2.loadProfile();
 check('持久化', '损坏数据返回空档案不崩溃', corrupt.weakPoints.length === 0 && corrupt.examCount === 0, JSON.stringify(corrupt), 'empty profile');

@@ -10,3 +10,6 @@
 /.clang-format
 /.clang-tidy
 **/.test
+
+# 离线测试的运行产物(每次跑都会重写,真值来源是测试脚本本身)
+_test_artifacts/*_test_result.json

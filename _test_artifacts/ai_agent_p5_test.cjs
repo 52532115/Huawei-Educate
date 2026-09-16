@@ -11,6 +11,15 @@ const root = path.resolve(__dirname, '..');
 const results = [];
 let failures = 0;
 
+/**
+ * Masks the random suffix the service appends to newly created error-book ids.
+ * It only exists to keep ids unique, so it carries no assertion value — and
+ * leaving it in `actual` would rewrite the result file on every run.
+ */
+function maskRandomIdSuffix(id) {
+  return typeof id === 'string' ? id.replace(/_[a-z0-9]{6}$/, '_<random>') : id;
+}
+
 function check(group, name, condition, actual, expected) {
   results.push({ group, name, status: condition ? 'PASS' : 'FAIL', actual, expected });
   if (!condition) failures++;
@@ -424,8 +433,13 @@ const afterOrphan = readErrorBook();
 check('F 回写', '原记录已被删除时回退为追加，不丢数据',
   afterOrphan.length === 1 && afterOrphan[0].source === 'adaptive_practice',
   { count: afterOrphan.length, source: afterOrphan[0].source }, { count: 1, source: 'adaptive_practice' });
+// The appended record's id ends in a random suffix (by design), so it is masked
+// in the reported value — otherwise every run rewrites the result file and a
+// stable artifact turns into per-run noise. The identity check itself still runs
+// against the real ids.
 check('F 回写', '追加后题目重新指向新记录，避免再次重复写入',
-  qOrphan.sourceRecordId === afterOrphan[0].id, qOrphan.sourceRecordId, afterOrphan[0].id);
+  qOrphan.sourceRecordId === afterOrphan[0].id,
+  maskRandomIdSuffix(qOrphan.sourceRecordId), maskRandomIdSuffix(afterOrphan[0].id));
 
 const bankQuestion = new global.AdaptivePracticeQuestion(
   'q_bank', '题库题', ['A', 'B', 'C', 'D'], 1, '数据结构', '基础', '来自题库', '解析', '建议', '');
@@ -462,8 +476,8 @@ service.submitAnswer(dupeB, 0, NOW);
 const afterDupe = readErrorBook();
 check('F 回写', '同题以不同题目 id 再答错时不新增重复条目',
   afterDupe.length === 1 && afterDupe[0].wrongCount === 2 && afterDupe[0].id === dupeA.sourceRecordId,
-  { count: afterDupe.length, wrongCount: afterDupe[0].wrongCount, id: afterDupe[0].id },
-  { count: 1, wrongCount: 2, id: dupeA.sourceRecordId });
+  { count: afterDupe.length, wrongCount: afterDupe[0].wrongCount, id: maskRandomIdSuffix(afterDupe[0].id) },
+  { count: 1, wrongCount: 2, id: maskRandomIdSuffix(dupeA.sourceRecordId) });
 
 const reviewRecord = {
   id: 'rev1', title: '答对的错题', option: ['A', 'B', 'C', 'D'], rightQues: 2,
