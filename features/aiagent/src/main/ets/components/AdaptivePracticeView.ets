@@ -5,6 +5,8 @@
 
 import { promptAction } from '@kit.ArkUI';
 import { AdaptivePracticeViewModel } from '../viewmodel/AdaptivePracticeViewModel';
+import { SOURCE_ERROR_BOOK } from '../service/ErrorBookPracticeSource';
+import { PracticeHistoryTotals, buildHistorySummaryLine } from '../service/PracticeHistoryStore';
 import {
   AdaptivePracticeQuestion,
   KnowledgePracticeProfile,
@@ -15,6 +17,7 @@ import {
 export struct AdaptivePracticeView {
   @StorageProp('topRectHeight') topRectHeight: number = 0;
   @StorageProp('bottomRectHeight') bottomRectHeight: number = 0;
+  @State historyTotals: PracticeHistoryTotals = new PracticeHistoryTotals();
   @State questions: AdaptivePracticeQuestion[] = [];
   @State profiles: KnowledgePracticeProfile[] = [];
   @State focusProfiles: KnowledgePracticeProfile[] = [];
@@ -24,6 +27,13 @@ export struct AdaptivePracticeView {
   @State correctCount: number = 0;
   @State summary: PracticeSessionSummary = new PracticeSessionSummary();
   @State attributionUpdatedCount: number = 0;
+  /**
+   * Render key for the question card. A @Builder invoked with a by-value
+   * parameter is NOT refreshed when that value changes, so the card would stay
+   * frozen on its first render — option highlight and "换一组" both looked dead.
+   * Driving the card through a keyed ForEach forces ArkUI to rebuild it.
+   */
+  @State cardKeys: string[] = ['init'];
   private vm: AdaptivePracticeViewModel = new AdaptivePracticeViewModel();
   pathStack: NavPathStack = AppStorage.get('pathStack') as NavPathStack;
 
@@ -40,7 +50,20 @@ export struct AdaptivePracticeView {
     this.answeredCount = this.vm.getAnsweredCount();
     this.correctCount = this.vm.getCorrectCount();
     this.summary = this.vm.getSummary();
+    this.vm.refreshHistoryTotals();
+    this.historyTotals = this.vm.historyTotals;
     this.attributionUpdatedCount = this.vm.attributionUpdatedCount;
+    // Must be last: the key is derived from the values just assigned above.
+    this.cardKeys = [this.buildCardKey()];
+  }
+
+  /** Changes whenever anything the question card renders changes. */
+  private buildCardKey(): string {
+    if (this.questions.length === 0 || this.currentIndex < 0 || this.currentIndex >= this.questions.length) {
+      return 'empty';
+    }
+    const question = this.questions[this.currentIndex];
+    return `${question.id}#${this.currentIndex}#${question.selectedIndex}#${question.isSubmitted ? 1 : 0}`;
   }
 
   build() {
@@ -53,7 +76,18 @@ export struct AdaptivePracticeView {
         } else if (this.questions.length === 0) {
           this.EmptyView();
         } else {
-          this.PracticeContent(this.questions[this.currentIndex]);
+          // Scroll (and its Column child) sit outside the keyed ForEach so the
+          // reading position survives; only the question card is rebuilt.
+          Scroll() {
+            Column() {
+              ForEach(this.cardKeys, (key: string) => {
+                this.PracticeContent();
+              }, (key: string) => key);
+            }
+            .width('100%');
+          }
+          .layoutWeight(1)
+          .scrollBar(BarState.Off);
         }
       }
       .width('100%')
@@ -110,19 +144,21 @@ export struct AdaptivePracticeView {
     .border({ width: { bottom: 0.5 }, color: '#E5E7EB' });
   }
 
+  /**
+   * Parameterless on purpose: a @Builder taking the question by value is not
+   * re-executed when that question changes, so the card used to freeze on its
+   * first render. Reading the state directly keeps it in step with the keyed
+   * ForEach above.
+   */
   @Builder
-  PracticeContent(question: AdaptivePracticeQuestion) {
-    Scroll() {
-      Column({ space: 12 }) {
-        this.FocusPanel();
-        this.QuestionCard(question);
-        this.ActionBar(question);
-      }
-      .width('100%')
-      .padding({ left: 14, right: 14, top: 14, bottom: 24 });
+  PracticeContent() {
+    Column({ space: 12 }) {
+      this.FocusPanel();
+      this.QuestionCard(this.questions[this.currentIndex]);
+      this.ActionBar(this.questions[this.currentIndex]);
     }
-    .layoutWeight(1)
-    .scrollBar(BarState.Off);
+    .width('100%')
+    .padding({ left: 14, right: 14, top: 14, bottom: 24 });
   }
 
   @Builder
@@ -175,6 +211,18 @@ export struct AdaptivePracticeView {
         .border({ width: { bottom: 0.5 }, color: '#F3F4F6' });
       }, (profile: KnowledgePracticeProfile) => profile.tag);
 
+      // The per-row 副标题 already carries each knowledge point's own history
+      // (the service bakes it into profile.reason), so this line is the
+      // all-time total across every knowledge point.
+      if (this.historyTotals.tags > 0) {
+        Text(buildHistorySummaryLine(this.historyTotals.attempts, this.historyTotals.correct,
+          this.historyTotals.tags))
+          .fontSize(11)
+          .fontColor('#6B7280')
+          .width('100%')
+          .margin({ top: 2 });
+      }
+
       if (this.attributionUpdatedCount > 0) {
         Text(`已为 ${this.attributionUpdatedCount} 道错题补充智能归因`)
           .fontSize(11)
@@ -214,6 +262,15 @@ export struct AdaptivePracticeView {
           .borderRadius(12)
           .padding({ left: 10, right: 10, top: 4, bottom: 4 })
           .margin({ left: 8 });
+        if (question.source === SOURCE_ERROR_BOOK) {
+          Text('错题重做')
+            .fontSize(12)
+            .fontColor('#B45309')
+            .backgroundColor('#FEF3C7')
+            .borderRadius(12)
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .margin({ left: 8 });
+        }
       }
       .width('100%');
 
@@ -251,7 +308,11 @@ export struct AdaptivePracticeView {
             this.vm.selectOption(index);
             this.syncState();
           });
-        }, (option: string, index: number) => `${index}_${option}`);
+          // The key must carry the rendering state: option text alone never
+          // changes, so ArkUI would reuse the row and the selection highlight
+          // would never update.
+        }, (option: string, index: number) =>
+          `${index}_${option}_${question.selectedIndex === index ? 'sel' : ''}_${question.isSubmitted ? 'sub' : ''}`);
       }
       .width('100%');
 
@@ -303,7 +364,7 @@ export struct AdaptivePracticeView {
       }
 
       if (question.syncedToErrorBook) {
-        Text('已同步到错题本')
+        Text(question.source === SOURCE_ERROR_BOOK ? '已更新错题本记录' : '已加入错题本')
           .fontSize(11)
           .fontColor('#1A56DB')
           .width('100%');
@@ -395,6 +456,17 @@ export struct AdaptivePracticeView {
               .fontColor('#047857')
               .width('100%');
           }
+          if (summary.historyWeakTags.length > 0) {
+            Text(`累计掌握度仍偏低：${summary.historyWeakTags.join('、')}`)
+              .fontSize(13)
+              .fontColor('#D97706')
+              .width('100%');
+          }
+          Text(buildHistorySummaryLine(summary.historyAttempts, summary.historyCorrect, summary.historyTags))
+            .fontSize(12)
+            .fontColor('#6B7280')
+            .width('100%')
+            .margin({ top: 4 });
         }
         .width('100%')
         .padding(16)

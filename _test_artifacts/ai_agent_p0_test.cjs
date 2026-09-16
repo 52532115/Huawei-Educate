@@ -39,8 +39,12 @@ class AiApiRequest { constructor(model, messages, stream) { this.model = model; 
 class AiMessage { constructor() { this.role = ''; this.content = ''; } }
 const util = { TextDecoder: { create() { return { decodeToString(u8) { return Buffer.from(u8).toString('utf8'); } }; } } };
 const Logger = { error() {}, info() {} };
-const AiConstants = { AI_API_URL: '', AI_MODEL: '', API_KEY: '', REQUEST_TIMEOUT: 1000 };
+const AiConstants = { AI_API_URL: '', AI_MODEL: '', REQUEST_TIMEOUT: 1000, MAX_RETRY_COUNT: 3 };
 const http = {};
+class ApiKeyStore {
+  getKey() { return 'sk-test'; }
+  isConfigured() { return true; }
+}
 `;
 const { AiService } = loadArkTs(
   'features/aiagent/src/main/ets/service/AiService.ets',

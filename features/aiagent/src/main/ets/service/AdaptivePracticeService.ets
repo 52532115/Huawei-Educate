@@ -6,6 +6,19 @@
 import fileIo from '@ohos.file.fs';
 import { DataCollectService } from './DataCollectService';
 import { ErrorAttributionService } from './ErrorAttributionService';
+import {
+  ErrorBookPracticeSource,
+  normalizeKnowledgeTag,
+  normalizeQuestionTitle,
+} from './ErrorBookPracticeSource';
+import {
+  DEFAULT_SEED_MASTERY,
+  PracticeHistoryEntry,
+  PracticeHistoryStore,
+  PracticeHistoryTotals,
+  buildPracticeHistoryLine,
+} from './PracticeHistoryStore';
+import { LearnerProfileStore } from './LearnerProfileStore';
 import { ErrorQuestionItem, LearningDataSnapshot } from '../viewmodel/ChatModels';
 import {
   AdaptivePracticeQuestion,
@@ -29,54 +42,116 @@ interface ErrorBookRecord {
   key: string;
   source?: string;
   sourceId?: string;
+  /** How many times the learner has re-answered this mistake incorrectly. */
+  wrongCount?: number;
+  /** Last time the learner reviewed this record (ms); drives review priority. */
+  lastReviewTime?: number;
 }
 
 const ERROR_STORE_KEY = 'ErrorQuestions';
 const ERROR_BOOK_FILE = '/errorBook.json';
+/** Ids of the shipped sample mistakes (see MineLocalData.DEFAULT_ERROR_MODELS). */
+const DEMO_RECORD_PREFIX = 'err_default_';
+/** How many low-mastery knowledge points are pushed into the learner profile. */
+const PROFILE_WEAK_SYNC_LIMIT = 3;
 
 export class AdaptivePracticeService {
   private dataCollectService: DataCollectService = new DataCollectService();
   private attributionService: ErrorAttributionService = new ErrorAttributionService();
+  private errorBookSource: ErrorBookPracticeSource = new ErrorBookPracticeSource();
+  private historyStore: PracticeHistoryStore = new PracticeHistoryStore();
+  private profileStore: LearnerProfileStore = new LearnerProfileStore();
+  /**
+   * The heuristic mastery per tag, captured while building the profiles. It is
+   * the seed a knowledge point starts from the first time it is answered, so a
+   * learner upgrading mid-course does not see every number restart.
+   */
+  private profileSeeds: Map<string, number> = new Map<string, number>();
+  /** Last weak-tag set pushed to the learner profile, so it is not rewritten per answer. */
+  private syncedWeakTagKey: string = '';
+  /** Record ids that were answered correctly and should be de-prioritised. */
+  private pendingReviewIds: string[] = [];
 
-  generateSession(questionCount: number = 6): AdaptivePracticeSession {
+  /**
+   * Builds a session in four layers, best material first:
+   *   1. the learner's own error-book records (the adaptive part)
+   *   2. knowledge-point profiles, as before
+   *   3. the shipped question bank, for whatever is still missing
+   *   4. nothing else — the profile layer already falls back to a placeholder
+   *
+   * `now` is a parameter so ordering stays reproducible in tests. `excludeIds`
+   * lets a caller ask for a fresh set — the error-book layer, which is fully
+   * deterministic, would otherwise return the same top N every time.
+   */
+  generateSession(questionCount: number = 6, now: number = Date.now(),
+    excludeIds: string[] = []): AdaptivePracticeSession {
     const snapshot = this.dataCollectService.collectAllData();
-    const profiles = this.buildProfiles(snapshot);
+    const profiles = this.buildProfiles(snapshot, now);
     const questions: AdaptivePracticeQuestion[] = [];
     const usedIds: string[] = [];
+    const usedTitles: string[] = [];
 
-    for (let i = 0; i < profiles.length && questions.length < questionCount; i++) {
-      const question = this.pickQuestionForProfile(profiles[i], usedIds);
+    const fromErrorBook =
+      this.errorBookSource.buildQuestions(snapshot.errorQuestions, questionCount, now, excludeIds);
+    for (let i = 0; i < fromErrorBook.length && questions.length < questionCount; i++) {
+      const question = fromErrorBook[i];
+      if (usedIds.indexOf(question.id) >= 0) {
+        continue;
+      }
       questions.push(question);
       usedIds.push(question.id);
+      usedTitles.push(normalizeQuestionTitle(question.title));
+    }
+
+    for (let i = 0; i < profiles.length && questions.length < questionCount; i++) {
+      const question = this.pickQuestionForProfile(profiles[i], usedIds, now);
+      if (this.containsTitle(usedTitles, question.title)) {
+        continue;
+      }
+      questions.push(question);
+      usedIds.push(question.id);
+      usedTitles.push(normalizeQuestionTitle(question.title));
     }
 
     const bank = this.buildQuestionBank();
     for (let i = 0; i < bank.length && questions.length < questionCount; i++) {
-      if (usedIds.indexOf(bank[i].id) < 0) {
+      if (usedIds.indexOf(bank[i].id) < 0 && !this.containsTitle(usedTitles, bank[i].title)) {
         questions.push(this.cloneQuestion(bank[i]));
         usedIds.push(bank[i].id);
+        usedTitles.push(normalizeQuestionTitle(bank[i].title));
       }
     }
 
-    return new AdaptivePracticeSession(`practice_${Date.now()}`, questions, profiles);
+    return new AdaptivePracticeSession(`practice_${now}`, questions, profiles);
   }
 
-  submitAnswer(question: AdaptivePracticeQuestion, selectedIndex: number): AdaptivePracticeQuestion {
+  submitAnswer(question: AdaptivePracticeQuestion, selectedIndex: number,
+    now: number = Date.now()): AdaptivePracticeQuestion {
     question.selectedIndex = selectedIndex;
     question.isSubmitted = true;
+
+    // Recorded before the error-book write-back, and on its own guard: the
+    // learner may abandon the session on the next tap, and a failure while
+    // updating the error book must not also cost them the mastery update.
+    if (!question.masteryRecorded) {
+      question.masteryRecorded = true;
+      this.recordMastery(question.knowledgeTag, selectedIndex === question.correctIndex, now);
+    }
 
     if (selectedIndex !== question.correctIndex) {
       question.attribution = this.attributionService.diagnosePracticeQuestion(question);
       if (!question.syncedToErrorBook) {
-        this.appendPracticeMistake(question);
+        this.recordPracticeMistake(question, now);
         question.syncedToErrorBook = true;
       }
+    } else if (question.sourceRecordId.length > 0) {
+      this.pendingReviewIds.push(question.sourceRecordId);
     }
 
     return question;
   }
 
-  buildSummary(session: AdaptivePracticeSession): PracticeSessionSummary {
+  buildSummary(session: AdaptivePracticeSession, now: number = Date.now()): PracticeSessionSummary {
     const summary = new PracticeSessionSummary();
     summary.totalCount = session.questions.length;
 
@@ -99,16 +174,83 @@ export class AdaptivePracticeService {
     summary.weakTags = this.mapKeys(weakMap);
     summary.masteredTags = this.mapKeys(masteredMap);
     summary.advice = this.buildAdvice(summary);
+
+    const totals: PracticeHistoryTotals = this.historyStore.getTotals();
+    summary.historyAttempts = totals.attempts;
+    summary.historyCorrect = totals.correct;
+    summary.historyTags = totals.tags;
+    summary.historyWeakTags = this.historyStore.weakestTags(now, PROFILE_WEAK_SYNC_LIMIT);
+    // Converge here as well: an answer that never crossed the weak threshold on
+    // its own still gets linked once the session is summarised.
+    this.syncProfileWeakPoints(now);
+
     session.summary = summary;
+    this.flushReviewMarks(now);
     return summary;
   }
 
-  private buildProfiles(snapshot: LearningDataSnapshot): KnowledgePracticeProfile[] {
+  /** All-time practice counters, for the panel shown before a session finishes. */
+  getHistoryTotals(): PracticeHistoryTotals {
+    return this.historyStore.getTotals();
+  }
+
+  /**
+   * Records one answer against the cumulative mastery and persists it right away.
+   * Nothing here is allowed to depend on the session finishing.
+   */
+  private recordMastery(tag: string, isCorrect: boolean, now: number): void {
+    const newMastery = this.historyStore.recordAnswer(tag, isCorrect, now, this.resolveSeedMastery(tag, now));
+    if (newMastery < 0) {
+      return;
+    }
+    this.syncProfileWeakPoints(now);
+  }
+
+  /**
+   * What this knowledge point starts from the first time it is answered.
+   * Falls back to building the profiles once when the session arrived from the
+   * agent (which hands a session over without generateSession ever running).
+   */
+  private resolveSeedMastery(tag: string, now: number): number {
+    if (this.profileSeeds.size === 0) {
+      this.buildProfiles(this.dataCollectService.collectAllData(), now);
+    }
+    const seed = this.profileSeeds.get(normalizeKnowledgeTag(tag));
+    return seed === undefined ? DEFAULT_SEED_MASTERY : seed;
+  }
+
+  /**
+   * Mirrors the weakest knowledge points into the learner profile so the tutor
+   * can talk about them. Guarded by the last set pushed: without it every single
+   * answer would trigger a profile read-modify-write.
+   */
+  private syncProfileWeakPoints(now: number): void {
+    const weakTags = this.historyStore.weakestTags(now, PROFILE_WEAK_SYNC_LIMIT);
+    const key = weakTags.join('|');
+    if (key === this.syncedWeakTagKey) {
+      return;
+    }
+    this.syncedWeakTagKey = key;
+    this.profileStore.recordPracticeWeakPoints(weakTags, now);
+  }
+
+  /**
+   * Knowledge-point profiles, weakest first.
+   *
+   * The error-book/course heuristic below no longer *is* the mastery — it only
+   * seeds it. A knowledge point that has been practiced takes its value from the
+   * cumulative history instead (which is what makes answering questions actually
+   * move the number); one that never has keeps the heuristic so a fresh install
+   * behaves exactly as before.
+   */
+  private buildProfiles(snapshot: LearningDataSnapshot, now: number): KnowledgePracticeProfile[] {
     const profileMap = new Map<string, KnowledgePracticeProfile>();
+    this.profileSeeds.clear();
+    const courseNotes = new Map<string, string>();
 
     for (let i = 0; i < snapshot.errorQuestions.length; i++) {
       const item: ErrorQuestionItem = snapshot.errorQuestions[i];
-      const tag = item.category && item.category.length > 0 ? item.category : '未分类';
+      const tag = normalizeKnowledgeTag(item.category);
       const existing = profileMap.get(tag);
       if (existing) {
         existing.errorCount += 1;
@@ -131,16 +273,17 @@ export class AdaptivePracticeService {
       if (course.progress >= 65) {
         continue;
       }
-      const courseName = this.normalizeKnowledgeTag(course.name);
-      if (courseName.length === 0) {
-        continue;
-      }
+      const courseName = normalizeKnowledgeTag(course.name);
       const existing = profileMap.get(courseName);
       if (existing) {
         existing.priority += 20;
-        existing.mastery = Math.min(existing.mastery, course.progress);
-        existing.reason = `${existing.reason}，且课程进度仅 ${course.progress}%`;
+        // No longer caps the mastery. A cumulative value that a course
+        // percentage can clamp would make "+6 for a correct answer" invisible
+        // on exactly the knowledge points the learner is working on; the hint
+        // survives as text instead.
+        courseNotes.set(courseName, `课程进度仅 ${course.progress}%，建议先跟课`);
       } else {
+        courseNotes.set(courseName, `课程进度仅 ${course.progress}%，建议先跟课`);
         profileMap.set(courseName, new KnowledgePracticeProfile(
           courseName,
           0,
@@ -157,15 +300,83 @@ export class AdaptivePracticeService {
       profileMap.set('计算机网络', new KnowledgePracticeProfile('计算机网络', 0, 68, 76, '默认巩固专业核心课程'));
     }
 
+    // The heuristic values are what a knowledge point starts from once answered.
+    profileMap.forEach((value: KnowledgePracticeProfile) => {
+      this.profileSeeds.set(value.tag, value.mastery);
+    });
+
+    this.applyPracticeHistory(profileMap, courseNotes, now);
+
     const profiles: KnowledgePracticeProfile[] = [];
     profileMap.forEach((value: KnowledgePracticeProfile) => {
       profiles.push(value);
     });
-    profiles.sort((a: KnowledgePracticeProfile, b: KnowledgePracticeProfile) => b.priority - a.priority);
+    // Weakest first — this is the one signal that actually steers which question
+    // the profile layer serves. priority keeps its old meaning as the tie-break
+    // (the UI and PracticeSessionStore both still read it), and the tag makes the
+    // order total, so the same inputs always produce the same sequence.
+    profiles.sort((a: KnowledgePracticeProfile, b: KnowledgePracticeProfile): number => {
+      if (a.mastery !== b.mastery) {
+        return a.mastery - b.mastery;
+      }
+      if (a.priority !== b.priority) {
+        return b.priority - a.priority;
+      }
+      return a.tag < b.tag ? -1 : (a.tag > b.tag ? 1 : 0);
+    });
     return profiles;
   }
 
-  private pickQuestionForProfile(profile: KnowledgePracticeProfile, usedIds: string[]): AdaptivePracticeQuestion {
+  /**
+   * Overlays the cumulative history onto the seeded profiles, and adds any
+   * knowledge point the learner has practiced that the heuristic alone never
+   * produced — a question answered from the shipped bank would otherwise move a
+   * mastery number that no row ever displays.
+   */
+  private applyPracticeHistory(profileMap: Map<string, KnowledgePracticeProfile>,
+    courseNotes: Map<string, string>, now: number): void {
+    // One storage read for the whole overlay; decays each entry off the copy.
+    const practiced: PracticeHistoryEntry[] = this.historyStore.getPracticedEntries();
+    for (let i = 0; i < practiced.length; i++) {
+      const entry = practiced[i];
+      const effective = this.historyStore.effectiveMasteryFor(entry, now);
+      if (effective < 0) {
+        continue;
+      }
+      let profile = profileMap.get(entry.tag);
+      if (profile === undefined) {
+        // Practiced from the shipped bank, which the heuristic never seeded —
+        // without this the mastery would move with no row showing it.
+        profile = new KnowledgePracticeProfile(entry.tag, 0, entry.mastery, 70, '');
+        profileMap.set(entry.tag, profile);
+      }
+      profile.mastery = effective;
+      profile.attempts = entry.attempts;
+      profile.correct = entry.correct;
+      profile.lastPracticeTime = entry.lastPracticeTime;
+      profile.reason = this.buildHistoryReason(entry, effective, courseNotes.get(entry.tag), now);
+    }
+  }
+
+  /**
+   * Replaces the heuristic's reason with what the history actually knows, e.g.
+   * "已练 6 次 · 正确 4 次（67%）· 10 天前练过，掌握度 66%（已衰减 8%）".
+   */
+  private buildHistoryReason(entry: PracticeHistoryEntry, effective: number,
+    courseNote: string | undefined, now: number): string {
+    let reason = `${buildPracticeHistoryLine(entry.attempts, entry.correct, entry.lastPracticeTime, now)}，掌握度 ${effective}%`;
+    const decay = entry.mastery - effective;
+    if (decay > 0) {
+      reason += `（已衰减 ${decay}%）`;
+    }
+    if (courseNote !== undefined && courseNote.length > 0) {
+      reason += `；${courseNote}`;
+    }
+    return reason;
+  }
+
+  private pickQuestionForProfile(profile: KnowledgePracticeProfile, usedIds: string[],
+    now: number): AdaptivePracticeQuestion {
     const bank = this.buildQuestionBank();
     for (let i = 0; i < bank.length; i++) {
       if (usedIds.indexOf(bank[i].id) < 0 && bank[i].knowledgeTag === profile.tag) {
@@ -180,7 +391,8 @@ export class AdaptivePracticeService {
     }
 
     return new AdaptivePracticeQuestion(
-      `q_custom_${profile.tag}_${Date.now()}`,
+      // `now`, not Date.now(): the whole session is reproducible for a given now.
+      `q_custom_${profile.tag}_${now}`,
       `关于「${profile.tag}」的复习，最有效的第一步是什么？`,
       ['直接刷高难题', '先回顾概念和典型例题，再做针对性练习', '只看答案解析', '暂时跳过该知识点'],
       1,
@@ -329,20 +541,41 @@ export class AdaptivePracticeService {
     ];
   }
 
-  private appendPracticeMistake(question: AdaptivePracticeQuestion): void {
+  /**
+   * Records a wrong answer against the error book. An existing record for the
+   * same question is always updated in place — never appended to — so a
+   * question the learner keeps missing can't pile up as duplicates.
+   *
+   * Only review bookkeeping is written: the learner's own note, the question
+   * wording and the original createTime (the "how long have I been getting this
+   * wrong" signal) are left alone.
+   */
+  private recordPracticeMistake(question: AdaptivePracticeQuestion, now: number): void {
     const records = this.readErrorBookRecords();
-    for (let i = 0; i < records.length; i++) {
-      if (records[i].sourceId === question.id) {
-        return;
+    const index = this.findMistakeRecordIndex(records, question);
+
+    if (index >= 0) {
+      const record = records[index];
+      record.answer = question.selectedIndex;
+      const previous = typeof record.wrongCount === 'number' && record.wrongCount > 0 ? record.wrongCount : 1;
+      record.wrongCount = previous + 1;
+      record.lastReviewTime = now;
+      if (question.attribution) {
+        record.analysis = `${question.attribution.causeLabel}（置信度 ${question.attribution.confidence}%）：` +
+          `${question.attribution.remediation}本次重做仍误选 ${this.toOptionLabel(question.selectedIndex)}。`;
       }
+      question.sourceRecordId = record.id;
+      this.writeErrorBookRecords(records);
+      return;
     }
 
     const analysis = question.attribution ?
       `${question.attribution.causeLabel}（置信度 ${question.attribution.confidence}%）：${question.attribution.remediation}` :
       '自适应练习中答错，建议回看解析并完成同类训练。';
 
+    const recordId = `adaptive_${now}_${Math.random().toString(36).substring(2, 8)}`;
     records.unshift({
-      id: `adaptive_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+      id: recordId,
       title: question.title,
       option: question.options,
       rightQues: question.correctIndex,
@@ -350,14 +583,83 @@ export class AdaptivePracticeService {
       userNote: question.explanation,
       mistakeReason: question.attribution ? question.attribution.evidence : '',
       knowledgeTag: question.knowledgeTag,
-      createTime: Date.now(),
+      createTime: now,
       analysis: analysis,
       key: '',
       source: 'adaptive_practice',
       sourceId: question.id,
+      wrongCount: 1,
+      lastReviewTime: now,
     });
-
+    question.sourceRecordId = recordId;
     this.writeErrorBookRecords(records);
+  }
+
+  /**
+   * Finds the record a question belongs to. Matching on the record id alone is
+   * not enough: demo records are regenerated with fresh ids whenever the app
+   * starts with an empty error book, and the same question may also have been
+   * entered by hand. So fall back to the question text, preferring a
+   * learner-owned record over a shipped demo one.
+   */
+  private findMistakeRecordIndex(records: ErrorBookRecord[], question: AdaptivePracticeQuestion): number {
+    if (question.sourceRecordId.length > 0) {
+      for (let i = 0; i < records.length; i++) {
+        if (records[i].id === question.sourceRecordId) {
+          return i;
+        }
+      }
+    }
+
+    const key = normalizeQuestionTitle(question.title);
+    if (key.length === 0) {
+      return -1;
+    }
+
+    let demoIndex = -1;
+    for (let i = 0; i < records.length; i++) {
+      if (normalizeQuestionTitle(records[i].title) !== key) {
+        continue;
+      }
+      if (records[i].id.indexOf(DEMO_RECORD_PREFIX) !== 0) {
+        return i;
+      }
+      if (demoIndex < 0) {
+        demoIndex = i;
+      }
+    }
+    return demoIndex;
+  }
+
+  /**
+   * Marks correctly-answered error-book questions as reviewed so they sink in
+   * the next session's ordering and stale mistakes surface instead. Nothing is
+   * ever deleted — only the learner removes their own data.
+   */
+  private flushReviewMarks(now: number): void {
+    if (this.pendingReviewIds.length === 0) {
+      return;
+    }
+    const reviewedIds = this.pendingReviewIds;
+    this.pendingReviewIds = [];
+
+    const records = this.readErrorBookRecords();
+    if (records.length === 0) {
+      return;
+    }
+
+    let changed = false;
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i];
+      if (reviewedIds.indexOf(record.id) < 0) {
+        continue;
+      }
+      record.lastReviewTime = now;
+      changed = true;
+    }
+    if (changed) {
+      this.writeErrorBookRecords(records);
+    }
   }
 
   private buildAdvice(summary: PracticeSessionSummary): string {
@@ -384,28 +686,11 @@ export class AdaptivePracticeService {
     return false;
   }
 
-  private normalizeKnowledgeTag(tag: string): string {
-    if (!tag || tag.length === 0 || this.containsMojibake(tag)) {
-      return '';
-    }
-    return tag;
-  }
-
-  private containsMojibake(text: string): boolean {
-    const markers = ['锛', '鏁', '璁', '缁', '绋', '楂', '鏈', '鍓', '', '€', '?'];
-    for (let i = 0; i < markers.length; i++) {
-      if (text.indexOf(markers[i]) >= 0) {
-        return true;
-      }
-    }
-    for (let i = 0; i < text.length; i++) {
-      const code = text.charCodeAt(i);
-      if (code >= 0xE000 && code <= 0xF8FF) {
-        return true;
-      }
-    }
-    return false;
-  }
+  // The local mojibake guard that used to live here is gone: the profile path
+  // now calls ErrorBookPracticeSource.normalizeKnowledgeTag, the same one the
+  // question path uses, so both key the same knowledge point. That version also
+  // maps a corrupt tag to 未分类 instead of dropping the row, and does not treat
+  // a half-width question mark as corruption.
 
   private cloneQuestion(question: AdaptivePracticeQuestion): AdaptivePracticeQuestion {
     return new AdaptivePracticeQuestion(
@@ -418,7 +703,23 @@ export class AdaptivePracticeService {
       question.source,
       question.explanation,
       question.recommendation,
+      question.sourceRecordId,
     );
+  }
+
+  private containsTitle(titles: string[], title: string): boolean {
+    const normalized = normalizeQuestionTitle(title);
+    if (normalized.length === 0) {
+      return false;
+    }
+    return titles.indexOf(normalized) >= 0;
+  }
+
+  private toOptionLabel(index: number): string {
+    if (index < 0) {
+      return '';
+    }
+    return String.fromCharCode(65 + index);
   }
 
   private mapKeys(map: Map<string, number>): string[] {

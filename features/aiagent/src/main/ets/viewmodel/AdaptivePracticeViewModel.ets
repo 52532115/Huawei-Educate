@@ -6,6 +6,8 @@
 import { AdaptivePracticeService } from '../service/AdaptivePracticeService';
 import { ErrorAttributionService } from '../service/ErrorAttributionService';
 import { PracticeSessionStore } from '../service/PracticeSessionStore';
+import { SOURCE_ERROR_BOOK } from '../service/ErrorBookPracticeSource';
+import { PracticeHistoryTotals } from '../service/PracticeHistoryStore';
 import {
   AdaptivePracticeQuestion,
   AdaptivePracticeSession,
@@ -18,9 +20,13 @@ export class AdaptivePracticeViewModel {
   currentIndex: number;
   isFinished: boolean;
   attributionUpdatedCount: number;
+  /** All-time practice counters, for the panel shown before a session finishes. */
+  historyTotals: PracticeHistoryTotals;
   private practiceService: AdaptivePracticeService;
   private attributionService: ErrorAttributionService;
   private sessionStore: PracticeSessionStore;
+  /** Error-book questions already served, so "换一组" moves on instead of repeating. */
+  private seenQuestionIds: string[] = [];
 
   constructor() {
     this.practiceService = new AdaptivePracticeService();
@@ -33,12 +39,32 @@ export class AdaptivePracticeViewModel {
     this.currentIndex = 0;
     this.isFinished = false;
     this.attributionUpdatedCount = 0;
+    this.seenQuestionIds = this.collectErrorBookIds(this.session);
+    this.historyTotals = this.practiceService.getHistoryTotals();
   }
 
   resetSession(): void {
-    this.session = this.practiceService.generateSession();
+    // Error-book selection is deterministic, so without this the same top N
+    // would come back on every "换一组".
+    const next = this.practiceService.generateSession(6, Date.now(), this.seenQuestionIds);
+    const nextIds = this.collectErrorBookIds(next);
+    // No unseen mistakes left: start the rotation over rather than repeat forever.
+    this.seenQuestionIds = nextIds.length > 0 ? this.seenQuestionIds.concat(nextIds) : [];
+    this.session = next;
     this.currentIndex = 0;
     this.isFinished = false;
+  }
+
+  private collectErrorBookIds(session: AdaptivePracticeSession): string[] {
+    const ids: string[] = [];
+    for (let i = 0; i < session.questions.length; i++) {
+      const question = session.questions[i];
+      if (question.source === SOURCE_ERROR_BOOK && this.seenQuestionIds.indexOf(question.id) < 0 &&
+        ids.indexOf(question.id) < 0) {
+        ids.push(question.id);
+      }
+    }
+    return ids;
   }
 
   getCurrentQuestion(): AdaptivePracticeQuestion | undefined {
@@ -114,6 +140,14 @@ export class AdaptivePracticeViewModel {
 
   getSummary(): PracticeSessionSummary {
     return this.session.summary;
+  }
+
+  /**
+   * Re-reads the all-time counters. Answered questions change them mid-session,
+   * and the focus panel shows them before any summary exists.
+   */
+  refreshHistoryTotals(): void {
+    this.historyTotals = this.practiceService.getHistoryTotals();
   }
 
   getOptionLabel(index: number): string {

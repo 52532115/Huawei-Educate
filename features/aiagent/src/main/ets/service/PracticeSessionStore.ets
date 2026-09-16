@@ -32,6 +32,9 @@ interface PracticeQuestionRecord {
   source: string;
   explanation: string;
   recommendation: string;
+  /** Link back to the error-book record; dropped here would re-append on every wrong answer. */
+  sourceRecordId?: string;
+  syncedToErrorBook?: boolean;
 }
 
 interface KnowledgeProfileRecord {
@@ -40,6 +43,10 @@ interface KnowledgeProfileRecord {
   mastery: number;
   priority: number;
   reason: string;
+  /** Practice history behind `mastery`; absent in sessions stored before P6. */
+  attempts?: number;
+  correct?: number;
+  lastPracticeTime?: number;
 }
 
 interface PracticeSessionRecord {
@@ -67,6 +74,8 @@ export class PracticeSessionStore {
         source: q.source,
         explanation: q.explanation,
         recommendation: q.recommendation,
+        sourceRecordId: q.sourceRecordId,
+        syncedToErrorBook: q.syncedToErrorBook,
       };
       questions.push(record);
     }
@@ -79,6 +88,9 @@ export class PracticeSessionStore {
         mastery: p.mastery,
         priority: p.priority,
         reason: p.reason,
+        attempts: p.attempts,
+        correct: p.correct,
+        lastPracticeTime: p.lastPracticeTime,
       };
       profiles.push(record);
     }
@@ -109,7 +121,7 @@ export class PracticeSessionStore {
       const record = JSON.parse(json) as PracticeSessionRecord;
       const questions: AdaptivePracticeQuestion[] = [];
       for (const r of record.questions) {
-        questions.push(new AdaptivePracticeQuestion(
+        const question = new AdaptivePracticeQuestion(
           r.id,
           r.title,
           r.options,
@@ -119,11 +131,21 @@ export class PracticeSessionStore {
           r.source,
           r.explanation,
           r.recommendation,
-        ));
+          r.sourceRecordId ? r.sourceRecordId : '',
+        );
+        // Sessions stored before this field existed simply come back unsynced.
+        question.syncedToErrorBook = r.syncedToErrorBook === true;
+        questions.push(question);
       }
       const profiles: KnowledgePracticeProfile[] = [];
       for (const r of record.profiles) {
-        profiles.push(new KnowledgePracticeProfile(r.tag, r.errorCount, r.mastery, r.priority, r.reason));
+        const profile = new KnowledgePracticeProfile(r.tag, r.errorCount, r.mastery, r.priority, r.reason);
+        // Sessions stored before these fields existed come back with no history,
+        // which just means the panel renders without the extra line.
+        profile.attempts = typeof r.attempts === 'number' ? r.attempts : 0;
+        profile.correct = typeof r.correct === 'number' ? r.correct : 0;
+        profile.lastPracticeTime = typeof r.lastPracticeTime === 'number' ? r.lastPracticeTime : 0;
+        profiles.push(profile);
       }
       if (questions.length === 0) {
         return null;

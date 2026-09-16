@@ -93,7 +93,8 @@ export class DataCollectService {
         }
 
         const category = ((eq['knowledgeTag'] as string) || '未分类').trim() || '未分类';
-        const item = new ErrorQuestionItem(title, category);
+        const rawId = eq['id'];
+        const item = new ErrorQuestionItem(title, category, typeof rawId === 'string' ? rawId : '');
         const options = eq['option'] as string[];
         if (options) {
           item.options = options;
@@ -114,6 +115,16 @@ export class DataCollectService {
         item.userNote = (eq['userNote'] as string) || '';
         item.mistakeReason = (eq['mistakeReason'] as string) || '';
         item.createTime = (eq['createTime'] as number) || 0;
+        item.analysis = (eq['analysis'] as string) || '';
+
+        const wrongCount = eq['wrongCount'] as number;
+        if (typeof wrongCount === 'number' && wrongCount > 0) {
+          item.wrongCount = wrongCount;
+        }
+        const lastReviewTime = eq['lastReviewTime'] as number;
+        if (typeof lastReviewTime === 'number' && lastReviewTime > 0) {
+          item.lastReviewTime = lastReviewTime;
+        }
         snapshot.errorQuestions.push(item);
       }
     } catch (e) {

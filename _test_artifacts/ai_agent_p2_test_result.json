@@ -94,21 +94,21 @@
     "group": "持久化",
     "name": "重启后从文件恢复",
     "status": "PASS",
-    "actual": "{\"weakPoints\":[\"回写弱点\"],\"strengths\":[],\"focusTopics\":[],\"examCount\":2,\"avgScore\":90,\"totalStudyTime\":60,\"analysisSummaries\":[],\"updatedAt\":1788881996596}",
+    "actual": "{\"weakPoints\":[\"回写弱点\"],\"dataWeakPoints\":[\"回写弱点\"],\"practiceWeakPoints\":[],\"strengths\":[],\"focusTopics\":[],\"examCount\":2,\"avgScore\":90,\"totalStudyTime\":60,\"analysisSummaries\":[],\"updatedAt\":1789528511707}",
     "expected": "restored from file"
   },
   {
     "group": "持久化",
     "name": "损坏数据返回空档案不崩溃",
     "status": "PASS",
-    "actual": "{\"weakPoints\":[],\"strengths\":[],\"focusTopics\":[],\"examCount\":0,\"avgScore\":0,\"totalStudyTime\":0,\"analysisSummaries\":[],\"updatedAt\":0}",
+    "actual": "{\"weakPoints\":[],\"dataWeakPoints\":[],\"practiceWeakPoints\":[],\"strengths\":[],\"focusTopics\":[],\"examCount\":0,\"avgScore\":0,\"totalStudyTime\":0,\"analysisSummaries\":[],\"updatedAt\":0}",
     "expected": "empty profile"
   },
   {
     "group": "重置",
     "name": "clearProfile后档案为空",
     "status": "PASS",
-    "actual": "{\"weakPoints\":[],\"strengths\":[],\"focusTopics\":[],\"examCount\":0,\"avgScore\":0,\"totalStudyTime\":0,\"analysisSummaries\":[],\"updatedAt\":0}",
+    "actual": "{\"weakPoints\":[],\"dataWeakPoints\":[],\"practiceWeakPoints\":[],\"strengths\":[],\"focusTopics\":[],\"examCount\":0,\"avgScore\":0,\"totalStudyTime\":0,\"analysisSummaries\":[],\"updatedAt\":0}",
     "expected": "empty profile"
   },
   {
