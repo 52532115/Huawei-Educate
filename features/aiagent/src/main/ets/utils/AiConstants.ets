@@ -16,7 +16,11 @@
 export class AiConstants {
   static readonly AI_API_URL: string = 'https://api.deepseek.com/v1/chat/completions';
   static readonly AI_MODEL: string = 'deepseek-v4-flash';
-  static readonly API_KEY: string = 'sk-dbcc97c9e05045b48f116ae0c0e22dc9';
+  /**
+   * The API key is NOT compiled into the app. It is entered by the user at
+   * runtime (⚙️ on the chat page) and persisted by ApiKeyStore inside the
+   * app sandbox only, so no build artifact ever contains a usable key.
+   */
   static readonly MAX_HISTORY_MESSAGES: number = 20;
   static readonly REQUEST_TIMEOUT: number = 60000;
   static readonly MAX_RETRY_COUNT: number = 3;

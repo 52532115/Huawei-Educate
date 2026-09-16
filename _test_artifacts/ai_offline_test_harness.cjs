@@ -140,16 +140,23 @@ check('学习数据', '无成绩时不伪造考试历史', emptySnapshot.examSco
 const adaptivePrelude = `
 const PracticeDifficulty = { BASIC: '基础', MEDIUM: '进阶', HARD: '挑战' };
 class AdaptivePracticeQuestion {
-  constructor(id, title, options, correctIndex, knowledgeTag, difficulty, source, explanation, recommendation) {
+  constructor(id, title, options, correctIndex, knowledgeTag, difficulty, source, explanation, recommendation,
+    sourceRecordId = '') {
     Object.assign(this, { id, title, options, correctIndex, knowledgeTag, difficulty, source, explanation,
-      recommendation, selectedIndex: -1, isSubmitted: false, syncedToErrorBook: false });
+      recommendation, selectedIndex: -1, isSubmitted: false, syncedToErrorBook: false, sourceRecordId,
+      masteryRecorded: false });
   }
 }
 class KnowledgePracticeProfile {
-  constructor(tag, errorCount, mastery, priority, reason) { Object.assign(this, { tag, errorCount, mastery, priority, reason }); }
+  constructor(tag, errorCount, mastery, priority, reason) {
+    Object.assign(this, { tag, errorCount, mastery, priority, reason, attempts: 0, correct: 0, lastPracticeTime: 0 });
+  }
 }
 class PracticeSessionSummary {
-  constructor() { Object.assign(this, { totalCount: 0, correctCount: 0, score: 0, weakTags: [], masteredTags: [], advice: '', generatedAt: Date.now() }); }
+  constructor() {
+    Object.assign(this, { totalCount: 0, correctCount: 0, score: 0, weakTags: [], masteredTags: [], advice: '',
+      generatedAt: Date.now(), historyAttempts: 0, historyCorrect: 0, historyTags: 0, historyWeakTags: [] });
+  }
 }
 class AdaptivePracticeSession {
   constructor(id, questions, profiles) { Object.assign(this, { id, questions, profiles, summary: new PracticeSessionSummary() }); }
@@ -160,6 +167,32 @@ class DataCollectService {
 class ErrorAttributionService {
   diagnosePracticeQuestion() { return { causeLabel: '测试归因', confidence: 80, remediation: '复习', evidence: '答错' }; }
 }
+// The service now consults the error book for questions. This harness runs with
+// an empty error book, so the stub must return nothing — the real source is
+// covered by ai_agent_p5_test.cjs.
+class ErrorBookPracticeSource {
+  buildQuestions() { return []; }
+}
+function normalizeQuestionTitle(title) { return title.toString().trim().replace(/\\s+/g, ' '); }
+function normalizeKnowledgeTag(tag) { return (tag || '').toString().trim() || '未分类'; }
+// Stubbed, not real: this file runs with an empty error book and no practice
+// history, so every knowledge point is a cold start and the seeded heuristic
+// values are exactly what these cases have always asserted. The real store's
+// behaviour is covered by ai_agent_p6_test.cjs.
+class PracticeHistoryStore {
+  // attempts === 0 means "no history", which keeps buildProfiles off the overlay.
+  getEntry() { return { tag: '', mastery: 0, attempts: 0, correct: 0, lastPracticeTime: 0 }; }
+  getEffectiveMastery() { return -1; }
+  getPracticedEntries() { return []; }
+  getTotals() { return { attempts: 0, correct: 0, tags: 0, lastPracticeTime: 0 }; }
+  weakestTags() { return []; }
+  recordAnswer() { return 0; }
+}
+class LearnerProfileStore {
+  recordPracticeWeakPoints() { }
+}
+const DEFAULT_SEED_MASTERY = 68;
+function buildPracticeHistoryLine() { return ''; }
 const fileIo = { readTextSync() { return ''; }, openSync() { return { fd: 1 }; }, writeSync() {}, closeSync() {} };
 global.AppStorage = {
   data: new Map(), get(key) { return this.data.get(key); }, setOrCreate(key, value) { this.data.set(key, value); }

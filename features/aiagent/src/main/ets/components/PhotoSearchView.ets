@@ -5,8 +5,9 @@ import { promptAction } from '@kit.ArkUI';
 import util from '@ohos.util';
 import { AiService } from '../service/AiService';
 import { AiMessage } from '../viewmodel/ChatModels';
+import { detectImageMeta, ImageFileMeta } from '../utils/ImageMeta';
 
-const PHOTO_SEARCH_BACKEND_URL = 'http://10.0.2.2:8000';
+const PHOTO_SEARCH_BACKEND_URL = 'https://10.0.2.2:8000';
 const PHOTO_SEARCH_TIMEOUT = 30000;
 
 interface ApiResponse {
@@ -33,9 +34,12 @@ export struct PhotoSearchView {
   private aiService: AiService = new AiService();
   pathStack: NavPathStack = AppStorage.get('pathStack') as NavPathStack;
 
+  aboutToDisappear(): void {
+    this.closeImageFd();
+  }
+
   build() {
-    NavDestination() {
-      Column() {
+    NavDestination() {      Column() {
         Row() {
           Button('←')
             .fontSize(18)
@@ -134,8 +138,8 @@ export struct PhotoSearchView {
                     .shadow({ radius: 4, color: '#1AFF4D4F', offsetY: 2 })
                     .offset({ x: 8, y: -8 })
                     .onClick(() => {
+                      this.closeImageFd();
                       this.selectedImageUri = '';
-                      this.imageFd = -1;
                     });
                   };
                 }
@@ -341,12 +345,24 @@ export struct PhotoSearchView {
       let photoPicker = new photoAccessHelper.PhotoViewPicker();
       let photoSelectResult = await photoPicker.select(photoSelectOptions);
       if (photoSelectResult && photoSelectResult.photoUris.length > 0) {
+        this.closeImageFd();
         this.selectedImageUri = photoSelectResult.photoUris[0];
         let file = fs.openSync(this.selectedImageUri, fs.OpenMode.READ_ONLY);
         this.imageFd = file.fd;
       }
     } catch (err) {
       console.error('PhotoViewPicker.select failed: ' + JSON.stringify(err));
+    }
+  }
+
+  private closeImageFd(): void {
+    if (this.imageFd !== -1) {
+      try {
+        fs.closeSync(this.imageFd);
+      } catch (e) {
+        // The descriptor may already be closed by the picker.
+      }
+      this.imageFd = -1;
     }
   }
 
@@ -412,21 +428,24 @@ export struct PhotoSearchView {
           bodyPrefix += `${this.questionText.trim()}\r\n`;
           bodyPrefix += `--${boundary}\r\n`;
         }
-        bodyPrefix += `Content-Disposition: form-data; name="image"; filename="image.jpg"\r\n`;
-        bodyPrefix += `Content-Type: image/jpeg\r\n\r\n`;
-
-        let bodySuffix = `\r\n--${boundary}--\r\n`;
-
-        let textEncoder = new util.TextEncoder();
-        let prefixUint8 = textEncoder.encode(bodyPrefix);
-        let suffixUint8 = textEncoder.encode(bodySuffix);
-
+        // Read the whole image first, then detect its real format from magic
+        // bytes so the upload keeps the original MIME type.
         let fileData = new ArrayBuffer(0);
         if (this.imageFd !== -1) {
           let stat = fs.statSync(this.imageFd);
           fileData = new ArrayBuffer(stat.size);
           fs.readSync(this.imageFd, fileData);
         }
+
+        const meta: ImageFileMeta = detectImageMeta(new Uint8Array(fileData));
+        bodyPrefix += `Content-Disposition: form-data; name="image"; filename="image.${meta.extension}"\r\n`;
+        bodyPrefix += `Content-Type: ${meta.mime}\r\n\r\n`;
+
+        let bodySuffix = `\r\n--${boundary}--\r\n`;
+
+        let textEncoder = new util.TextEncoder();
+        let prefixUint8 = textEncoder.encode(bodyPrefix);
+        let suffixUint8 = textEncoder.encode(bodySuffix);
 
         let combined = new Uint8Array(prefixUint8.length + fileData.byteLength + suffixUint8.length);
         combined.set(prefixUint8, 0);
@@ -464,6 +483,9 @@ export struct PhotoSearchView {
       this.aiAnswer = this.buildSearchErrorMessage(err, this.selectedImageUri.length > 0);
     } finally {
       this.isLoading = false;
+      // The image was fully read into memory before the request; release the
+      // descriptor so it never leaks, even when an error aborts the upload.
+      this.closeImageFd();
     }
   }
 

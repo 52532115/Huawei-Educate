@@ -1,0 +1,212 @@
+[
+  {
+    "group": "APIKey",
+    "name": "初始为空",
+    "status": "PASS",
+    "actual": "",
+    "expected": ""
+  },
+  {
+    "group": "APIKey",
+    "name": "保存后取到且去空格",
+    "status": "PASS",
+    "actual": "sk-runtime-key-123",
+    "expected": "sk-runtime-key-123"
+  },
+  {
+    "group": "APIKey",
+    "name": "isConfigured为true",
+    "status": "PASS",
+    "actual": true,
+    "expected": true
+  },
+  {
+    "group": "APIKey",
+    "name": "重启后从文件恢复",
+    "status": "PASS",
+    "actual": "sk-runtime-key-123",
+    "expected": "sk-runtime-key-123"
+  },
+  {
+    "group": "APIKey",
+    "name": "clearKey后为空",
+    "status": "PASS",
+    "actual": "",
+    "expected": ""
+  },
+  {
+    "group": "Markdown",
+    "name": "标题/段落/列表/代码块种类齐全",
+    "status": "PASS",
+    "actual": [
+      "1:1:1",
+      "0:0:2",
+      "3:0:2",
+      "4:0:2",
+      "2:0:1",
+      "1:3:1"
+    ],
+    "expected": "typed blocks"
+  },
+  {
+    "group": "Markdown",
+    "name": "7个#不算标题",
+    "status": "PASS",
+    "actual": [
+      0,
+      0
+    ],
+    "expected": "paragraph"
+  },
+  {
+    "group": "Markdown",
+    "name": "行内粗体与代码解析",
+    "status": "PASS",
+    "actual": [
+      "0:这是",
+      "1:加粗",
+      "0:和",
+      "2:代码",
+      "0:结尾"
+    ],
+    "expected": "text/bold/text/code/text"
+  },
+  {
+    "group": "Markdown",
+    "name": "未闭合标记按原文",
+    "status": "PASS",
+    "actual": [
+      "不闭合**加粗 和 `代码"
+    ],
+    "expected": "literal text"
+  },
+  {
+    "group": "Markdown",
+    "name": "空串返回一个空span",
+    "status": "PASS",
+    "actual": 1,
+    "expected": 1
+  },
+  {
+    "group": "图片MIME",
+    "name": "PNG魔数",
+    "status": "PASS",
+    "actual": "image/png",
+    "expected": "image/png"
+  },
+  {
+    "group": "图片MIME",
+    "name": "JPEG魔数",
+    "status": "PASS",
+    "actual": "image/jpeg",
+    "expected": "image/jpeg"
+  },
+  {
+    "group": "图片MIME",
+    "name": "GIF87a魔数",
+    "status": "PASS",
+    "actual": "gif",
+    "expected": "gif"
+  },
+  {
+    "group": "图片MIME",
+    "name": "WEBP魔数",
+    "status": "PASS",
+    "actual": "image/webp",
+    "expected": "image/webp"
+  },
+  {
+    "group": "图片MIME",
+    "name": "未知格式兜底jpeg",
+    "status": "PASS",
+    "actual": "image/jpeg",
+    "expected": "image/jpeg"
+  },
+  {
+    "group": "静态检查",
+    "name": "客户端源码无硬编码密钥",
+    "status": "PASS",
+    "actual": "no sk- key",
+    "expected": "no key in source"
+  },
+  {
+    "group": "静态检查",
+    "name": "图片后端使用HTTPS",
+    "status": "PASS",
+    "actual": "https",
+    "expected": "HTTPS"
+  },
+  {
+    "group": "静态检查",
+    "name": "图片fd在closeImageFd关闭",
+    "status": "PASS",
+    "actual": "closeSync",
+    "expected": "closeSync(this.imageFd)"
+  },
+  {
+    "group": "静态检查",
+    "name": "图片MIME按真实类型检测",
+    "status": "PASS",
+    "actual": "detectImageMeta",
+    "expected": "real MIME"
+  },
+  {
+    "group": "静态检查",
+    "name": "ChatBubble使用MarkdownText渲染",
+    "status": "PASS",
+    "actual": "MarkdownText",
+    "expected": "MarkdownText"
+  },
+  {
+    "group": "静态检查",
+    "name": "AiService有重试循环与流式构造",
+    "status": "PASS",
+    "actual": "retry + stream=true",
+    "expected": "retry loop + stream body"
+  },
+  {
+    "group": "APIKey",
+    "name": "缺key时chat抛友好错误",
+    "status": "PASS",
+    "actual": "尚未配置 API Key。请点击聊天页右上角 ⚙️，填写 API Key 后重试。",
+    "expected": "friendly hint"
+  },
+  {
+    "group": "APIKey",
+    "name": "缺key时chatStream同样报错",
+    "status": "PASS",
+    "actual": "尚未配置 API Key。请点击聊天页右上角 ⚙️，填写 API Key 后重试。",
+    "expected": "friendly hint"
+  },
+  {
+    "group": "重试",
+    "name": "2次失败后第3次成功",
+    "status": "PASS",
+    "actual": {
+      "attempts": 3,
+      "content": "你好"
+    },
+    "expected": "3 attempts, 你好"
+  },
+  {
+    "group": "重试",
+    "name": "全失败时抛错且尝试次数为MAX+1",
+    "status": "PASS",
+    "actual": {
+      "attempts": 4,
+      "msg": "network error"
+    },
+    "expected": "4 attempts"
+  },
+  {
+    "group": "重试",
+    "name": "取消后中止重试",
+    "status": "PASS",
+    "actual": {
+      "msg": "Request cancelled",
+      "attempts": 1,
+      "atCancel": 1
+    },
+    "expected": "no further attempts"
+  }
+]
