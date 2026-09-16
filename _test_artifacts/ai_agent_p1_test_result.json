@@ -145,14 +145,20 @@
           "errorCount": 2,
           "mastery": 55,
           "priority": 90,
-          "reason": "错题集中出现"
+          "reason": "错题集中出现",
+          "attempts": 0,
+          "correct": 0,
+          "lastPracticeTime": 0
         },
         {
           "tag": "不定积分",
           "errorCount": 1,
           "mastery": 68,
           "priority": 70,
-          "reason": "课程进度低"
+          "reason": "课程进度低",
+          "attempts": 0,
+          "correct": 0,
+          "lastPracticeTime": 0
         }
       ]
     },
@@ -183,7 +189,7 @@
     "group": "练习交接",
     "name": "profile 恢复",
     "status": "PASS",
-    "actual": "[{\"tag\":\"函数与极限\",\"errorCount\":2,\"mastery\":55,\"priority\":90,\"reason\":\"错题集中出现\"},{\"tag\":\"不定积分\",\"errorCount\":1,\"mastery\":68,\"priority\":70,\"reason\":\"课程进度低\"}]",
+    "actual": "[{\"tag\":\"函数与极限\",\"errorCount\":2,\"mastery\":55,\"priority\":90,\"reason\":\"错题集中出现\",\"attempts\":0,\"correct\":0,\"lastPracticeTime\":0},{\"tag\":\"不定积分\",\"errorCount\":1,\"mastery\":68,\"priority\":70,\"reason\":\"课程进度低\",\"attempts\":0,\"correct\":0,\"lastPracticeTime\":0}]",
     "expected": "profiles intact"
   },
   {
