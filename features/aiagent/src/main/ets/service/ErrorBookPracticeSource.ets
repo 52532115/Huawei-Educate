@@ -30,8 +30,11 @@ const DEFAULT_RECOMMENDATION = '先独立重做一遍，再对照当时的错误
  * as corruption (killing any question that contains one) and carries an
  * invisible PUA character that is easy to blank out by accident — and a blank
  * marker makes indexOf('') match everything.
+ *
+ * Exported so the RAG chunker drops corrupted chunks with the same rule
+ * instead of growing a second detector that can drift from this one.
  */
-function isCorruptedText(text: string): boolean {
+export function isCorruptedText(text: string): boolean {
   const markers: string[] = ['锛', '鏁', '璁', '缁', '绋', '楂', '鏈', '鍓', '�'];
   for (let i = 0; i < markers.length; i++) {
     if (text.indexOf(markers[i]) >= 0) {

@@ -278,7 +278,7 @@ const MessageRole = { USER: 'user', AI: 'ai', SYSTEM: 'system', ANALYSIS: 'analy
 const MessageStatus = { SENDING: 'sending', SUCCESS: 'success', FAILED: 'failed' };
 global.MessageStatus = MessageStatus;
 global.ChatMessage = ChatMessage;
-const ChatIntent = { PRACTICE: 'practice', ANALYTICS: 'analytics', CHAT: 'chat' };
+const ChatIntent = { PRACTICE: 'practice', ANALYTICS: 'analytics', KNOWLEDGE: 'knowledge', CHAT: 'chat' };
 class AiMessage { constructor() { this.role = ''; this.content = ''; } }
 class AgentLimitError extends Error {}
 class AgentTimeoutError extends Error {}
@@ -325,8 +325,15 @@ class LearnerProfileStore {
   recordFocusTopics() {}
   recordAnalysisSummary() {}
 }
+class KnowledgeStore {
+  static getInstance() { return new KnowledgeStore(); }
+  search() { return global.knowledgeHits || []; }
+  citationOf() { return '出处'; }
+  buildContextBlock(hits) { return hits.length > 0 ? '【检索到的课程资料】' : ''; }
+}
 const AiConstants = {
   SYSTEM_PROMPT: 'sys', WELCOME_MESSAGE: 'welcome', MAX_HISTORY_MESSAGES: 20,
+  KNOWLEDGE_SYSTEM_PROMPT: 'knowledge sys',
   RECOMMEND_QUESTIONS: [], AI_MODEL: '', AI_API_URL: '', API_KEY: '', REQUEST_TIMEOUT: 1000,
 };
 `;

@@ -16,6 +16,7 @@
 import {
   AiMessage,
   AiToolCall,
+  ApiToolProperty,
   ApiToolSchema,
   ApiToolFunctionSchema,
   ApiToolParameters,
@@ -23,11 +24,13 @@ import {
   ErrorQuestionItem,
   CourseProgressDataItem,
 } from '../viewmodel/ChatModels';
+import { KnowledgeHit } from '../viewmodel/KnowledgeModels';
 import { DataCollectService } from './DataCollectService';
 import { ErrorAttributionService } from './ErrorAttributionService';
 import { AdaptivePracticeService } from './AdaptivePracticeService';
 import { PracticeSessionStore } from './PracticeSessionStore';
 import { LearnerProfileStore } from './LearnerProfileStore';
+import { KnowledgeStore, describeKnowledgeSource } from './KnowledgeStore';
 
 interface AttributionToolResult {
   updatedCount: number;
@@ -69,6 +72,22 @@ interface ErrorQuestionsToolResult {
   message: string;
 }
 
+/** One retrieved course passage, numbered to match the citation the answer uses. */
+interface KnowledgePassage {
+  index: number;
+  citation: string;
+  source: string;
+  knowledgeTag: string;
+  text: string;
+}
+
+interface KnowledgeSearchToolResult {
+  query: string;
+  count: number;
+  passages: KnowledgePassage[];
+  message: string;
+}
+
 /** Tool result used when a tool name is unknown or execution failed. */
 export class ToolErrorResult {
   error: string = '';
@@ -78,15 +97,21 @@ export class ToolErrorResult {
  * Tool registry for the AI tutor agent.
  *
  * Each tool wraps an existing local service (DataCollect / ErrorAttribution /
- * AdaptivePractice) behind a stable name + JSON Schema description that the
- * LLM uses to decide when to call it. Tools return JSON strings so their
- * output can be fed back into the conversation as tool messages.
+ * AdaptivePractice / KnowledgeStore) behind a stable name + JSON Schema
+ * description that the LLM uses to decide when to call it. Tools return JSON
+ * strings so their output can be fed back into the conversation as tool
+ * messages.
  */
 export class AgentToolRegistry {
   private dataService: DataCollectService = new DataCollectService();
   private attributionService: ErrorAttributionService = new ErrorAttributionService();
   private practiceService: AdaptivePracticeService = new AdaptivePracticeService();
   private profileStore: LearnerProfileStore = new LearnerProfileStore();
+  /**
+   * Shared instance: the agent and the chat fast path must hit the same index,
+   * otherwise the corpus is built (and held in memory) twice.
+   */
+  private knowledgeStore: KnowledgeStore = KnowledgeStore.getInstance();
 
   execute(name: string, argsJson: string): Promise<string> {
     switch (name) {
@@ -104,6 +129,8 @@ export class AgentToolRegistry {
         return Promise.resolve(this.toolGetErrorQuestions());
       case 'get_learner_profile':
         return Promise.resolve(this.toolGetLearnerProfile());
+      case 'search_course_knowledge':
+        return Promise.resolve(this.toolSearchCourseKnowledge(argsJson));
       default: {
         const errorResult = new ToolErrorResult();
         errorResult.error = `未知工具：${name}`;
@@ -202,6 +229,69 @@ export class AgentToolRegistry {
     };
     return JSON.stringify(payload);
   }
+
+  /**
+   * Retrieval over the local course corpus. Read-only and local: no API call,
+   * no personal data, so it is safe to run on every round the model asks for it.
+   *
+   * A miss is reported as an explicit "not in the course material" message
+   * rather than an empty list. That phrasing is the point: it tells the model
+   * to say so instead of inventing a passage, which is the same "no data, no
+   * fiction" contract the learning-data tools already follow.
+   */
+  private toolSearchCourseKnowledge(argsJson: string): string {
+    const query = parseToolQuery(argsJson);
+    if (query.length === 0) {
+      const errorResult = new ToolErrorResult();
+      errorResult.error = '缺少 query 参数：请传入要检索的知识点关键词，例如 {"query":"三次握手"}。';
+      return JSON.stringify(errorResult);
+    }
+
+    const hits = this.knowledgeStore.search(query);
+    const passages: KnowledgePassage[] = [];
+    for (let i = 0; i < hits.length; i++) {
+      const hit: KnowledgeHit = hits[i];
+      const passage: KnowledgePassage = {
+        index: i + 1,
+        citation: this.knowledgeStore.citationOf(hit),
+        source: describeKnowledgeSource(hit.chunk.sourceType),
+        knowledgeTag: hit.chunk.knowledgeTag,
+        text: hit.chunk.text,
+      };
+      passages.push(passage);
+    }
+
+    const payload: KnowledgeSearchToolResult = {
+      query: query,
+      count: passages.length,
+      passages: passages,
+      message: passages.length === 0 ?
+        `课程知识库中没有匹配「${query}」的内容。请如实告知学生课程资料未覆盖该知识点，` +
+        '可以给出通用解释，但要说明这部分不在课程资料中，且不得编造出处。' :
+        '以上为课程知识库中的原文片段，回答时请用【出处】标注引用来源，并只依据这些内容陈述课程观点。',
+    };
+    return JSON.stringify(payload);
+  }
+}
+
+/**
+ * Reads the `query` argument out of a tool call's raw JSON.
+ *
+ * Models occasionally send empty or malformed arguments; both are reported as
+ * "missing query" rather than throwing, so a bad tool call costs one round
+ * instead of the whole turn.
+ */
+function parseToolQuery(argsJson: string): string {
+  if (typeof argsJson !== 'string' || argsJson.trim().length === 0) {
+    return '';
+  }
+  try {
+    const parsed = JSON.parse(argsJson) as Record<string, Object>;
+    const raw = parsed['query'];
+    return typeof raw === 'string' ? raw.trim() : '';
+  } catch (e) {
+    return '';
+  }
 }
 
 /**
@@ -224,12 +314,38 @@ export function buildToolDefinitions(): ApiToolSchema[] {
     '获取错题本中的错题明细（题干、知识点、正确/错误选项、错误思路、笔记）。当学生询问错题详情或特定错题时调用。'));
   definitions.push(makeTool('get_learner_profile',
     '获取该学生的长期学习档案（跨会话记忆）：薄弱点、优势、近期练习主题、考试次数与平均分、累计学习时长、近期分析结论。当学生询问你对他/她的了解、之前聊过的内容、学习目标，或需要结合历史情况给出个性化建议时调用。'));
+  definitions.push(makeQueryTool('search_course_knowledge',
+    '检索本地课程知识库（各门课程的教学大纲要点与题库解析），返回带出处的原文片段。当学生询问学科知识本身时调用，例如"什么是X""X和Y的区别""X的原理/定义/作用"。不用于查询学生个人学习数据。',
+    '要检索的知识点关键词，用课程里的术语，例如"三次握手""二叉树的遍历""进程与线程的区别"。'));
   return definitions;
 }
 
 /** Builds a single parameterless function tool entry. */
 function makeTool(name: string, description: string): ApiToolSchema {
   const parameters: ApiToolParameters = { type: 'object' };
+  const fn: ApiToolFunctionSchema = {
+    name: name,
+    description: description,
+    parameters: parameters,
+  };
+  const tool: ApiToolSchema = { type: 'function', function: fn };
+  return tool;
+}
+
+/**
+ * Builds a function tool entry taking one required string argument named
+ * `query`. The seven data tools are parameterless; retrieval is the first tool
+ * that needs input from the model, so the argument name is fixed here rather
+ * than generic — one caller, one shape.
+ */
+function makeQueryTool(name: string, description: string, paramDescription: string): ApiToolSchema {
+  const queryProperty: ApiToolProperty = { type: 'string', description: paramDescription };
+  const properties: Record<string, ApiToolProperty> = { 'query': queryProperty };
+  const parameters: ApiToolParameters = {
+    type: 'object',
+    properties: properties,
+    required: ['query'],
+  };
   const fn: ApiToolFunctionSchema = {
     name: name,
     description: description,
@@ -256,6 +372,8 @@ export function getToolStepLabel(toolName: string): string {
       return '正在整理你的错题明细…';
     case 'get_learner_profile':
       return '正在读取你的学习档案…';
+    case 'search_course_knowledge':
+      return '正在检索课程知识…';
     default:
       return `正在执行 ${toolName}…`;
   }

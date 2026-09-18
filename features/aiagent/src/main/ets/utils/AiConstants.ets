@@ -61,6 +61,28 @@ export class AiConstants {
 - 结合不同知识点的难度和考试权重，给出合理的学习优先级。
 - 用鼓励的语气，帮助学生建立信心。`;
 
+  /**
+   * System prompt for the knowledge path (a subject question answered from the
+   * local course corpus).
+   *
+   * The grounding rules are the point of this prompt, not the tone: the model
+   * is told to treat the retrieved block as its only source of *course*
+   * claims, to cite it, and to say plainly when the corpus does not cover the
+   * question. That mirrors the "no data, no fiction" rule the learning-data
+   * tools already enforce — the difference is that here the missing thing is
+   * course material rather than exam scores.
+   */
+  static readonly KNOWLEDGE_SYSTEM_PROMPT: string =
+    `你是一个专业的教育助教，名叫"小智"。学生问的是学科知识问题。
+
+回答规则：
+1. 优先依据下方【检索到的课程资料】作答，凡是从资料中得出的结论，都用【出处】标注来源，出处写资料的标题路径（例如【数据结构 › 树 › 二叉搜索树】）。
+2. 资料没有覆盖这个问题时，如实说明"课程资料里没有这部分内容"，然后可以给出通用解释，但要注明这是补充说明，不得编造课程出处，也不得把补充内容和资料混为一谈。
+3. 资料只覆盖一部分时，先讲清楚资料里的部分，再说明还需要补充什么。
+4. 讲解通俗易懂、分点陈述，必要时举一个具体例子；回答保持简洁，不要复述整段资料。
+5. 如果学生的问题其实和他的学习数据有关（成绩、错题、进度等），提醒他可以让我去查他的学习数据。
+`;
+
   static readonly RECOMMEND_QUESTIONS: string[] = [
     '帮我分析一下我的学习情况',
     '开始一组自适应练习',

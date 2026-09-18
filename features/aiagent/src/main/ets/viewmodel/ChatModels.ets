@@ -134,8 +134,21 @@ export interface ApiToolFunctionSchema {
   parameters: ApiToolParameters;
 }
 
+/** One JSON-Schema property of a tool argument. */
+export interface ApiToolProperty {
+  type: string;
+  description: string;
+}
+
+/**
+ * OpenAI-style parameter schema. The seven data tools take no arguments, so
+ * `properties`/`required` are omitted for them; tools that do take arguments
+ * (the knowledge search) fill both in.
+ */
 export interface ApiToolParameters {
   type: string;
+  properties?: Record<string, ApiToolProperty>;
+  required?: string[];
 }
 
 export class AiApiRequest {

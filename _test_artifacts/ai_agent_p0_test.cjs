@@ -74,6 +74,13 @@ class LearnerProfileStore {
   recordFocusTopics() {}
   buildProfilePrompt() { return ''; }
 }
+class KnowledgeStore {
+  static getInstance() { return new KnowledgeStore(); }
+  search() { return []; }
+  citationOf() { return ''; }
+  stats() { return { chunkCount: 0, termCount: 0, avgChunkLength: 0 }; }
+}
+function describeKnowledgeSource() { return '课程笔记'; }
 class AiMessage { constructor() { this.role = ''; this.content = ''; } }
 class AiToolCall { constructor() { this.id = ''; this.type = 'function'; this.function = new AiToolCallFunction(); } }
 class AiToolCallFunction { constructor() { this.name = ''; this.arguments = ''; } }
@@ -83,12 +90,28 @@ const agentTools = loadArkTs(
   'features/aiagent/src/main/ets/service/AgentTools.ets',
   toolPrelude,
 );
-check('工具定义', '7个工具定义结构合法', (() => {
+check('工具定义', '8个工具定义结构合法', (() => {
   try {
     const tools = agentTools.buildToolDefinitions();
-    return Array.isArray(tools) && tools.length === 7 && tools.every(t => t.type === 'function' && t.function.name && t.function.description && t.function.parameters && t.function.parameters.type === 'object');
+    return Array.isArray(tools) && tools.length === 8 && tools.every(t => t.type === 'function' && t.function.name && t.function.description && t.function.parameters && t.function.parameters.type === 'object');
   } catch (e) { return false; }
-})(), 'array', '7 valid tools');
+})(), 'array', '8 valid tools');
+
+check('工具定义', '知识检索工具是唯一带参数的：query 必填，其余 7 个无参数', (() => {
+  try {
+    const tools = agentTools.buildToolDefinitions();
+    const withArgs = tools.filter(t => t.function.parameters.properties);
+    const search = tools.find(t => t.function.name === 'search_course_knowledge');
+    // Round-trip through JSON: the parameters go into the request body, so the
+    // serialized form is the one that actually matters.
+    const wire = JSON.parse(JSON.stringify(search.function.parameters));
+    return withArgs.length === 1 && Boolean(search) &&
+      wire.type === 'object' &&
+      wire.required.join('|') === 'query' &&
+      wire.properties.query.type === 'string' &&
+      wire.properties.query.description.length > 0;
+  } catch (e) { return false; }
+})(), 'exactly one parameterised tool', 'search_course_knowledge takes a required string query');
 
 const registry = new agentTools.AgentToolRegistry();
 registry.execute('get_learning_stats', '{}').then((r) => {
@@ -100,7 +123,7 @@ registry.execute('get_learning_stats', '{}').then((r) => {
     registry.execute('unknown_tool', '{}').then((r3) => {
       const p3 = JSON.parse(r3);
       check('工具执行', '未知工具返回error字段', typeof p3.error === 'string' && p3.error.includes('未知工具'), r3, 'has error');
-      check('步骤文案', '所有工具都有中文步骤文案', ['get_learning_stats','analyze_error_book','generate_practice','get_exam_history','get_course_progress','get_error_questions','get_learner_profile']
+      check('步骤文案', '所有工具都有中文步骤文案', ['get_learning_stats','analyze_error_book','generate_practice','get_exam_history','get_course_progress','get_error_questions','get_learner_profile','search_course_knowledge']
         .every(n => typeof agentTools.getToolStepLabel(n) === 'string' && agentTools.getToolStepLabel(n).length > 0), 'labels', 'all present');
       report();
     });

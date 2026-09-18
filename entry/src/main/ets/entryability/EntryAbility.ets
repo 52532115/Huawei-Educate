@@ -17,6 +17,7 @@ import { UIAbility } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { KnowledgeStore } from '@safe/aiagent';
 
 const DOMAIN = 0x0000;
 
@@ -32,6 +33,12 @@ export default class EntryAbility extends UIAbility {
   onWindowStageCreate(windowStage: window.WindowStage): void {
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
+
+    // Store filesDir for local data persistence (e.g., error book).
+    // Published before the page is loaded: pages read it while they build, and
+    // the knowledge warm-up scheduled below needs it to find the index cache.
+    AppStorage.setOrCreate('filesDir', this.context.filesDir);
+
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
         hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
@@ -49,8 +56,11 @@ export default class EntryAbility extends UIAbility {
         'Failed to set the window layout to full-screen mode. Cause:' + JSON.stringify(err));
     });
 
-    // Store filesDir for local data persistence (e.g., error book)
-    AppStorage.setOrCreate('filesDir', this.context.filesDir);
+    // Assemble the course knowledge index off the critical path, so the first
+    // question does not pay for it. The call only schedules the build (past the
+    // first frame) and swallows every failure, so retrieval can never affect
+    // whether the app starts.
+    KnowledgeStore.scheduleWarmUp();
 
     let type = window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR;
     let avoidArea = windowClass.getWindowAvoidArea(type);

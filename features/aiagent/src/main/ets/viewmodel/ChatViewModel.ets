@@ -22,6 +22,7 @@ import {
   AiMessage,
   ErrorQuestionItem,
 } from './ChatModels';
+import { KnowledgeHit } from './KnowledgeModels';
 import { AiService, ApiKeyMissingError } from '../service/AiService';
 import { AgentService, AgentLimitError, AgentTimeoutError } from '../service/AgentService';
 import { SessionStore } from '../service/SessionStore';
@@ -32,6 +33,7 @@ import { PracticeSessionStore } from '../service/PracticeSessionStore';
 import { IntentRouter, ChatIntent } from '../service/IntentRouter';
 import { ContextCompressor } from '../service/ContextCompressor';
 import { LearnerProfileStore } from '../service/LearnerProfileStore';
+import { KnowledgeStore } from '../service/KnowledgeStore';
 import { Logger } from '@safe/basic';
 import { AiConstants } from '../utils/AiConstants';
 
@@ -50,6 +52,8 @@ export class ChatViewModel {
   private intentRouter: IntentRouter;
   private contextCompressor: ContextCompressor;
   private profileStore: LearnerProfileStore;
+  /** Shared with the agent's search_course_knowledge tool, so the index is built once. */
+  private knowledgeStore: KnowledgeStore;
   private messageIdCounter: number;
   private sessionIdCounter: number;
   private activeStepId: string = '';
@@ -66,6 +70,7 @@ export class ChatViewModel {
     this.intentRouter = new IntentRouter();
     this.contextCompressor = new ContextCompressor();
     this.profileStore = new LearnerProfileStore();
+    this.knowledgeStore = KnowledgeStore.getInstance();
     this.sessionList = [];
     this.messageIdCounter = 0;
     this.sessionIdCounter = 0;
@@ -191,6 +196,8 @@ export class ChatViewModel {
     try {
       if (intent === ChatIntent.PRACTICE) {
         this.replyPracticeReady(aiMessage);
+      } else if (intent === ChatIntent.KNOWLEDGE) {
+        await this.runKnowledgeChat(text.trim(), aiMessage);
       } else if (intent === ChatIntent.CHAT) {
         await this.runPlainChat(text.trim(), aiMessage);
       } else {
@@ -264,6 +271,56 @@ export class ChatViewModel {
   /** CHAT intent: plain conversation without tools (fast & cheap), with streaming + fallback. */
   private async runPlainChat(userText: string, aiMessage: ChatMessage): Promise<void> {
     const messages = this.buildContextMessages(AiConstants.SYSTEM_PROMPT);
+    const userMsg = new AiMessage();
+    userMsg.role = 'user';
+    userMsg.content = userText;
+    messages.push(userMsg);
+
+    let fullContent = '';
+    const delivered = await this.aiService.chatWithFallback(
+      messages,
+      (chunk: string) => {
+        fullContent += chunk;
+        aiMessage.content = fullContent;
+        this.currentSession.messages = [...this.currentSession.messages];
+        this.notifyChange();
+      },
+    );
+
+    if (delivered === 0) {
+      throw new Error('AI 未返回有效回答，请稍后重试。');
+    }
+    aiMessage.status = MessageStatus.SUCCESS;
+  }
+
+  /**
+   * KNOWLEDGE intent: answer a subject question grounded on the local course
+   * corpus.
+   *
+   * Retrieval runs first and decides the shape of the turn:
+   *   - hits    → the passages go in as a system block and the answer must cite them;
+   *   - no hits → the turn degrades to ordinary chat, because an ungrounded
+   *               answer is better than a fabricated citation.
+   *
+   * Either way no tool loop is involved, so this costs exactly one API call —
+   * the local search is a few milliseconds, which keeps the first token well
+   * inside the latency budget.
+   */
+  private async runKnowledgeChat(userText: string, aiMessage: ChatMessage): Promise<void> {
+    const hits: KnowledgeHit[] = this.knowledgeStore.search(userText);
+    if (hits.length === 0) {
+      // Deliberately not shown to the user: "found nothing" is an internal
+      // detail, and the reply they get is a normal, useful answer.
+      Logger.info('[ChatViewModel] knowledge base has no match, answering as plain chat');
+      await this.runPlainChat(userText, aiMessage);
+      return;
+    }
+    Logger.info(`[ChatViewModel] knowledge base returned ${hits.length} passages`);
+
+    const messages = this.buildContextMessages(
+      AiConstants.KNOWLEDGE_SYSTEM_PROMPT,
+      this.knowledgeStore.buildContextBlock(hits),
+    );
     const userMsg = new AiMessage();
     userMsg.role = 'user';
     userMsg.content = userText;
@@ -642,7 +699,15 @@ export class ChatViewModel {
     return text;
   }
 
-  private buildContextMessages(systemPrompt: string): AiMessage[] {
+  /**
+   * Builds the message list shared by the plain-chat and knowledge paths.
+   *
+   * `extraSystemBlock` carries retrieved course passages when there are any. It
+   * is appended last on purpose: retrieval is the most perishable context in
+   * the request, and putting it directly before the user's turn is what keeps
+   * the model from drifting onto older conversation instead of the material.
+   */
+  private buildContextMessages(systemPrompt: string, extraSystemBlock: string = ''): AiMessage[] {
     const sysMsg = new AiMessage();
     sysMsg.role = 'system';
     sysMsg.content = systemPrompt;
@@ -691,6 +756,13 @@ export class ChatViewModel {
       }
     }
 
+    if (extraSystemBlock.length > 0) {
+      const blockMsg = new AiMessage();
+      blockMsg.role = 'system';
+      blockMsg.content = extraSystemBlock;
+      messages.push(blockMsg);
+    }
+
     return messages;
   }
 
@@ -721,12 +793,14 @@ export class ChatViewModel {
 5. analyze_error_book：对错题本做智能归因并写回错题本。学生要求分析错题本或做错题归因时调用。
 6. generate_practice：根据薄弱知识点生成一组自适应练习题。学生想练习、刷题时调用。
 7. get_learner_profile：查询该学生的长期学习档案（跨会话记忆）。学生询问你对他/她的了解、历史分析结论，或需要结合历史情况回答时调用。
+8. search_course_knowledge：检索本地课程知识库（课程大纲要点与题库解析），需要传入 query 关键词。学生问学科知识本身时调用，例如"什么是X""X和Y的区别""X的原理/定义"。
 
 工作规则：
 - 涉及学生个人学习数据的问题，必须先调用对应工具获取真实数据，严禁凭空编造成绩、课程、时长或错题。
+- 回答学科知识问题时，先调用 search_course_knowledge 检索课程资料，并依据检索结果作答、标注出处；如果知识库没有相关内容，如实说明，可以给出通用解释但不得编造课程出处。
 - 数据不足时如实说明，不要虚构。
 - 回答简洁、具体、可执行，多用真实数据说话，语气亲切鼓励。
-- 每个工具调用不要超过一次。
+- 每个工具调用不要超过一次，因此 search_course_knowledge 的 query 要一次写准；需要多个知识点时用最有代表性的那个关键词。
 - 学生的长期学习档案会以系统消息提供，回答时自然结合这些历史情况，避免重复询问已知信息。
 - 当你的建议包含"开始练习"且学生尚未练习时，在回答正文之后另起一行输出一行 JSON 指令：{"action":"start_practice"}；其余情况不要输出 JSON。`;
   }

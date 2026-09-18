@@ -195,6 +195,16 @@ export class AdaptivePracticeService {
   }
 
   /**
+   * The shipped question bank (stem, options, answer, explanation, advice),
+   * exposed so the knowledge index can index the explanations. Every call
+   * builds a fresh array of fresh questions, so a caller cannot mutate the bank
+   * the practice engine hands out.
+   */
+  getShippedQuestionBank(): AdaptivePracticeQuestion[] {
+    return this.buildQuestionBank();
+  }
+
+  /**
    * Records one answer against the cumulative mastery and persists it right away.
    * Nothing here is allowed to depend on the session finishing.
    */

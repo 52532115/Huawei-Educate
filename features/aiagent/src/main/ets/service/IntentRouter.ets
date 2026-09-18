@@ -18,7 +18,9 @@ export enum ChatIntent {
   PRACTICE = 'practice',
   /** 涉及学习数据：走 agent 循环，由模型决定调用哪些工具。 */
   ANALYTICS = 'analytics',
-  /** 纯知识问答/闲聊：直接流式对话，不带工具（更快更省）。 */
+  /** 学科知识问答：先本地检索课程知识库，再带着资料流式作答，不进 agent 循环。 */
+  KNOWLEDGE = 'knowledge',
+  /** 纯闲聊：直接流式对话，不带工具、不检索（更快更省）。 */
   CHAT = 'chat',
 }
 
@@ -32,8 +34,32 @@ const ANALYTICS_KEYWORDS: string[] = [
 ];
 
 /**
- * Cheap local intent routing. PRACTICE is checked first so sentences like
- * "针对错题出几道练习题" resolve to practice instead of analytics.
+ * Question forms that ask for subject knowledge rather than for the learner's
+ * own data.
+ *
+ * Deliberately broad on the "asking" side: a false positive only costs one
+ * local search, and an empty result degrades to ordinary chat, so precision
+ * here is far cheaper than the recall it buys. The one thing these keywords
+ * must never do is outrank ANALYTICS — "为什么我的成绩下降" has to reach the
+ * tools, and it does, because 成绩 is matched first.
+ */
+const KNOWLEDGE_KEYWORDS: string[] = [
+  '什么是', '是什么', '什么叫', '什么意思', '为什么', '为何', '怎么', '怎样', '如何',
+  '区别', '原理', '解释', '讲解', '介绍一下', '讲讲', '说说', '含义', '定义', '概念',
+  '作用', '特点', '举例', '证明', '推导', '公式',
+];
+
+/**
+ * Cheap local intent routing. Order matters and is the whole design:
+ *
+ *   1. PRACTICE  — so "针对错题出几道练习题" is practice, not analytics.
+ *   2. ANALYTICS — so "为什么我的成绩下降" reaches the tools, not the retriever.
+ *   3. KNOWLEDGE — subject questions get grounded on the local course corpus.
+ *   4. CHAT      — everything else stays a plain, tool-free, search-free reply.
+ *
+ * Only questions that clearly ask *about a subject* take the knowledge path; a
+ * retrieval miss there falls back to plain chat, so a stray keyword can never
+ * turn a casual message into a wrong citation.
  */
 export class IntentRouter {
   route(text: string): ChatIntent {
@@ -42,6 +68,9 @@ export class IntentRouter {
     }
     if (this.containsAny(text, ANALYTICS_KEYWORDS)) {
       return ChatIntent.ANALYTICS;
+    }
+    if (this.containsAny(text, KNOWLEDGE_KEYWORDS)) {
+      return ChatIntent.KNOWLEDGE;
     }
     return ChatIntent.CHAT;
   }

@@ -32,6 +32,11 @@ function loadArkTs(relativePath, prelude = '') {
 // ---------- IntentRouter ----------
 const routerMod = loadArkTs('features/aiagent/src/main/ets/service/IntentRouter.ets');
 const router = new routerMod.IntentRouter();
+// "什么是导数" now routes to KNOWLEDGE (a local course-corpus search before the
+// reply) instead of CHAT. That is the intended change of the RAG work, not a
+// regression: the question is a subject question, and an empty retrieval falls
+// back to plain chat anyway. The data-driven cases below are unchanged, which is
+// the property that actually matters — no analytics question lost its tools.
 const routeCases = [
   ['帮我出几道极限题练练手', routerMod.ChatIntent.PRACTICE],
   ['针对我的错题出几道练习题', routerMod.ChatIntent.PRACTICE],
@@ -40,14 +45,26 @@ const routeCases = [
   ['我最近考试中哪些知识点比较薄弱', routerMod.ChatIntent.ANALYTICS],
   ['帮我详细分析我的错题本', routerMod.ChatIntent.ANALYTICS],
   ['我的课程进度怎么样', routerMod.ChatIntent.ANALYTICS],
-  ['什么是导数', routerMod.ChatIntent.CHAT],
+  ['什么是导数', routerMod.ChatIntent.KNOWLEDGE],
   ['你好呀', routerMod.ChatIntent.CHAT],
   ['如何提高考试成绩', routerMod.ChatIntent.ANALYTICS],
+  ['三次握手的原理是什么', routerMod.ChatIntent.KNOWLEDGE],
+  ['栈和队列的区别', routerMod.ChatIntent.KNOWLEDGE],
+  ['今天有点累', routerMod.ChatIntent.CHAT],
 ];
 for (const [text, expected] of routeCases) {
   const got = router.route(text);
   check('意图路由', `"${text}" -> ${expected}`, got === expected, got, expected);
 }
+
+// Ordering rule: PRACTICE and ANALYTICS must keep outranking KNOWLEDGE, or a
+// stray knowledge keyword would steal a question that needs real learner data.
+check('意图路由', '知识问句里出现「练习」仍归 PRACTICE',
+  router.route('讲讲这道练习题涉及的知识点') === routerMod.ChatIntent.PRACTICE,
+  router.route('讲讲这道练习题涉及的知识点'), routerMod.ChatIntent.PRACTICE);
+check('意图路由', '「为什么我的成绩下降」仍归 ANALYTICS（数据词优先于问句词）',
+  router.route('为什么我的成绩下降了') === routerMod.ChatIntent.ANALYTICS,
+  router.route('为什么我的成绩下降了'), routerMod.ChatIntent.ANALYTICS);
 
 // ---------- ContextCompressor ----------
 const compressPrelude = `

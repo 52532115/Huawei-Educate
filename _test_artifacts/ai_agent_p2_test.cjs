@@ -204,6 +204,12 @@ function makeAnalysisReal() {
 class ErrorAttributionService { updateErrorBookAttributions() { return 2; } }
 class AdaptivePracticeService { generateSession(n) { return { questions: [{ title: '导数计算' }, { title: '极限证明' }] }; } }
 class PracticeSessionStore { savePendingSession() {} }
+class KnowledgeStore {
+  static getInstance() { return new KnowledgeStore(); }
+  search() { return []; }
+  citationOf() { return ''; }
+}
+function describeKnowledgeSource() { return '课程笔记'; }
 class AiMessage { constructor() { this.role = ''; this.content = ''; } }
 class AiToolCall { constructor() { this.id = ''; this.type = 'function'; this.function = new AiToolCallFunction(); } }
 class AiToolCallFunction { constructor() { this.name = ''; this.arguments = ''; } }
@@ -215,7 +221,7 @@ const agentTools = loadArkTs(
 );
 
 const tools = agentTools.buildToolDefinitions();
-check('工具定义', '共7个且包含get_learner_profile', tools.length === 7 && tools.some(t => t.function.name === 'get_learner_profile'), tools.map(t => t.function.name).join(','), '7 tools with profile');
+check('工具定义', '共8个且包含get_learner_profile', tools.length === 8 && tools.some(t => t.function.name === 'get_learner_profile'), tools.map(t => t.function.name).join(','), '8 tools with profile');
 check('步骤文案', 'get_learner_profile有文案', typeof agentTools.getToolStepLabel('get_learner_profile') === 'string' && agentTools.getToolStepLabel('get_learner_profile').length > 0, agentTools.getToolStepLabel('get_learner_profile'), 'label');
 
 const registry = new agentTools.AgentToolRegistry();

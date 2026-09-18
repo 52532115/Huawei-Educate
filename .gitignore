@@ -13,3 +13,9 @@
 
 # 离线测试的运行产物(每次跑都会重写,真值来源是测试脚本本身)
 _test_artifacts/*_test_result.json
+
+# 本地构建日志(真机验证的输出,可随时重跑,且通常是 UTF-16LE 不好 diff)
+_test_artifacts/*.log
+
+# WorkBuddy 的本地工作记忆(工程笔记,非项目交付物)
+/.workbuddy/
