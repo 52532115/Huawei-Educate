@@ -120,7 +120,7 @@ export class AgentToolRegistry {
       case 'analyze_error_book':
         return Promise.resolve(this.toolAnalyzeErrorBook());
       case 'generate_practice':
-        return Promise.resolve(this.toolGeneratePractice());
+        return this.toolGeneratePractice();
       case 'get_exam_history':
         return Promise.resolve(this.toolGetExamHistory());
       case 'get_course_progress':
@@ -161,7 +161,25 @@ export class AgentToolRegistry {
     return JSON.stringify(payload);
   }
 
-  private toolGeneratePractice(): string {
+  /**
+   * Builds a practice set, stocking the pool first.
+   *
+   * One knowledge point only. A tool call runs inside a conversation turn that
+   * is already waiting on the model, so this shares that budget rather than
+   * spending it: one point is enough to put material in the session that the
+   * shipped bank cannot produce, and the practice page fills the rest of the
+   * pool opportunistically while the learner works through the round.
+   *
+   * A failed pass is swallowed here because the local generator is a complete
+   * fallback — a session built entirely from the error book and the shipped
+   * bank is what this tool produced before synthesis existed.
+   */
+  private async toolGeneratePractice(): Promise<string> {
+    try {
+      await this.practiceService.prepareQuestions(this.practiceService.previewProfiles(), 1);
+    } catch (e) {
+      // Nothing to report: practice continues with the material already on hand.
+    }
     const session = this.practiceService.generateSession(6);
     // Hand the generated session to the practice page so the action button
     // opens exactly the questions the agent produced.

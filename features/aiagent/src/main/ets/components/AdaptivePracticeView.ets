@@ -342,6 +342,17 @@ export struct AdaptivePracticeView {
         .lineHeight(21)
         .width('100%');
 
+      // Only synthesized questions carry this, and it is the one thing that
+      // makes an answer checkable: a learner who disagrees with the explanation
+      // can read the passage it came from instead of taking the app's word.
+      if (question.citation.length > 0) {
+        Text(`参考讲义：${question.citation}`)
+          .fontSize(12)
+          .fontColor('#1A56DB')
+          .lineHeight(18)
+          .width('100%');
+      }
+
       if (question.attribution) {
         Column({ space: 6 }) {
           Text(`${question.attribution.causeLabel} · 置信度 ${question.attribution.confidence}%`)

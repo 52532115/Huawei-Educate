@@ -18,6 +18,7 @@ const suites = [
   ['p5', 'ai_agent_p5_test.cjs'],
   ['p6', 'ai_agent_p6_test.cjs'],
   ['p7', 'ai_agent_p7_test.cjs'],
+  ['p8', 'ai_agent_p8_test.cjs'],
 ];
 
 let totalPass = 0;

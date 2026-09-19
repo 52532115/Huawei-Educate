@@ -10,6 +10,7 @@ import {
   ErrorBookPracticeSource,
   normalizeKnowledgeTag,
   normalizeQuestionTitle,
+  stableTextHash,
 } from './ErrorBookPracticeSource';
 import {
   DEFAULT_SEED_MASTERY,
@@ -19,7 +20,17 @@ import {
   buildPracticeHistoryLine,
 } from './PracticeHistoryStore';
 import { LearnerProfileStore } from './LearnerProfileStore';
-import { ErrorQuestionItem, LearningDataSnapshot } from '../viewmodel/ChatModels';
+import { AiService } from './AiService';
+import { KnowledgeStore } from './KnowledgeStore';
+import { GeneratedQuestionPool } from './GeneratedQuestionPool';
+import {
+  PracticeQuestionSynthesizer,
+  SynthesisPassage,
+  SynthesisRequest,
+  SYNTHESIS_QUESTION_COUNT,
+} from './PracticeQuestionSynthesizer';
+import { AiMessage, ErrorQuestionItem, LearningDataSnapshot } from '../viewmodel/ChatModels';
+import { KnowledgeHit } from '../viewmodel/KnowledgeModels';
 import {
   AdaptivePracticeQuestion,
   AdaptivePracticeSession,
@@ -48,12 +59,79 @@ interface ErrorBookRecord {
   lastReviewTime?: number;
 }
 
+/**
+ * The session under construction. Both passes share one draft, so the top-up
+ * pass cannot re-add a question the first pass already picked.
+ */
+class PracticeDraft {
+  questions: AdaptivePracticeQuestion[] = [];
+  usedIds: string[] = [];
+  usedTitles: string[] = [];
+}
+
 const ERROR_STORE_KEY = 'ErrorQuestions';
 const ERROR_BOOK_FILE = '/errorBook.json';
 /** Ids of the shipped sample mistakes (see MineLocalData.DEFAULT_ERROR_MODELS). */
 const DEMO_RECORD_PREFIX = 'err_default_';
 /** How many low-mastery knowledge points are pushed into the learner profile. */
 const PROFILE_WEAK_SYNC_LIMIT = 3;
+/**
+ * How many knowledge points one background synthesis pass may cover.
+ *
+ * Each one costs a retrieval plus a generation call, and the pass runs after a
+ * round has already been served — so this is a latency and spend ceiling, not a
+ * capability limit. The pool fills up over successive rounds; asking for every
+ * weak point at once would put several seconds of work behind a tap that is
+ * supposed to feel instant.
+ */
+const PREPARE_TAG_LIMIT = 2;
+/**
+ * How long the practice page waits before starting a background pass.
+ *
+ * Long enough that the round being rendered and its entry animation are done
+ * with, short enough that a learner who taps "换一组" twice in quick succession
+ * still sees new material the second time.
+ */
+const PRACTICE_PREPARE_DELAY_MS = 1200;
+/** Passages retrieved per knowledge point to ground a synthesis call. */
+const PASSAGE_TOP_K = 3;
+/** Output budget for one synthesis call; three questions measured ~650 tokens. */
+const SYNTHESIS_MAX_TOKENS = 2048;
+/**
+ * Cached questions that make a knowledge point "covered for now".
+ *
+ * Equal to one call's output: a learner gets two rounds out of a fresh batch
+ * before the next call, which is what keeps practice from turning into a
+ * generation request behind every tap.
+ */
+const COVERED_QUESTION_COUNT = SYNTHESIS_QUESTION_COUNT;
+/**
+ * Mastery ceilings for the difficulty the prompt asks for. Deliberately a
+ * separate mapping from the profile ordering: this only shapes the questions
+ * written for a knowledge point, it does not reorder anything.
+ */
+const DIFFICULTY_BASIC_MAX = 50;
+const DIFFICULTY_MEDIUM_MAX = 80;
+
+/** Counters describing the synthesis side, for tests and a diagnostics row. */
+export class SynthesisStats {
+  /** Questions currently cached. */
+  pooled: number = 0;
+  /** Knowledge points actually sent for generation this process. */
+  attempts: number = 0;
+  /** Questions accepted from model replies this process. */
+  generated: number = 0;
+  /** True when a failure has latched synthesis off until the backend changes. */
+  blocked: boolean = false;
+  /**
+   * Why it latched off, or '' when it is healthy.
+   *
+   * Kept because this is the one failure in the app that is invisible by
+   * design: the learner sees practice working normally, just without new
+   * questions, so "it never fails loudly" also means "nobody can tell why".
+   */
+  lastError: string = '';
+}
 
 export class AdaptivePracticeService {
   private dataCollectService: DataCollectService = new DataCollectService();
@@ -61,6 +139,53 @@ export class AdaptivePracticeService {
   private errorBookSource: ErrorBookPracticeSource = new ErrorBookPracticeSource();
   private historyStore: PracticeHistoryStore = new PracticeHistoryStore();
   private profileStore: LearnerProfileStore = new LearnerProfileStore();
+  /**
+   * Cache of model-written questions. Constructed eagerly — the synchronous
+   * session builder reads it on the first frame — but doing nothing in its
+   * constructor: the file is only read when the pool is first queried, and
+   * without a published `filesDir` it never touches the file system at all.
+   */
+  private questionPool: GeneratedQuestionPool;
+  /** Pure prompt/parse logic. No state, so sharing one is safe. */
+  private synthesizer: PracticeQuestionSynthesizer = new PracticeQuestionSynthesizer();
+  /**
+   * Collaborators the background synthesis path needs, injected for tests and
+   * resolved on first use otherwise.
+   *
+   * Lazy on purpose: `generateSession` runs synchronously on the practice
+   * page's first frame, and resolving the retrieval singleton or building an
+   * API client there would put real work in front of the first question.
+   */
+  private injectedAiService: AiService | null;
+  private injectedKnowledgeStore: KnowledgeStore | null;
+  private aiServiceRef: AiService | null = null;
+  private knowledgeStoreRef: KnowledgeStore | null = null;
+  /** In-flight pass, so a second caller awaits the first instead of paying twice. */
+  private preparePromise: Promise<number> | null = null;
+  /**
+   * Backend identity at the moment synthesis last failed, or '' when healthy.
+   *
+   * A key rather than a boolean: a missing key or an unreachable host will not
+   * fix itself, so retrying on every round only burns time — but the learner
+   * *can* fix it by configuring something, and switching mode (or between two
+   * backends) changes this key, which is what re-arms the attempt.
+   */
+  private synthesisBlockedKey: string = '';
+  private synthesisAttempts: number = 0;
+  private synthesisGenerated: number = 0;
+  /** Message behind the latch; see SynthesisStats.lastError. */
+  private synthesisLastError: string = '';
+
+  constructor(
+    aiService: AiService | null = null,
+    knowledgeStore: KnowledgeStore | null = null,
+    questionPool: GeneratedQuestionPool | null = null,
+  ) {
+    this.injectedAiService = aiService;
+    this.injectedKnowledgeStore = knowledgeStore;
+    this.questionPool = questionPool === null ? new GeneratedQuestionPool() : questionPool;
+  }
+
   /**
    * The heuristic mastery per tag, captured while building the profiles. It is
    * the seed a knowledge point starts from the first time it is answered, so a
@@ -75,54 +200,320 @@ export class AdaptivePracticeService {
   /**
    * Builds a session in four layers, best material first:
    *   1. the learner's own error-book records (the adaptive part)
-   *   2. knowledge-point profiles, as before
-   *   3. the shipped question bank, for whatever is still missing
-   *   4. nothing else — the profile layer already falls back to a placeholder
+   *   2. questions the model wrote from the course corpus, one per weak point —
+   *      this is what reaches the knowledge points the shipped bank cannot
+   *   3. knowledge-point profiles: bank questions matched by tag, falling back
+   *      to a review card for a tag the bank does not reach at all
+   *   4. the shipped question bank, for whatever is still missing
+   *
+   * Layer 2 is empty until a background pass fills it, so a fresh install —
+   * or a device with no AI configured — produces exactly the session this
+   * builder produced before it existed.
    *
    * `now` is a parameter so ordering stays reproducible in tests. `excludeIds`
-   * lets a caller ask for a fresh set — the error-book layer, which is fully
-   * deterministic, would otherwise return the same top N every time.
+   * lists the questions the caller has already been served: every layer honours
+   * it, and only when the whole pool is exhausted does the round repeat itself.
+   * That is what makes "换一组" walk down the ranked material instead of handing
+   * back a set the learner has just finished.
    */
   generateSession(questionCount: number = 6, now: number = Date.now(),
     excludeIds: string[] = []): AdaptivePracticeSession {
     const snapshot = this.dataCollectService.collectAllData();
     const profiles = this.buildProfiles(snapshot, now);
-    const questions: AdaptivePracticeQuestion[] = [];
-    const usedIds: string[] = [];
-    const usedTitles: string[] = [];
+    const draft = new PracticeDraft();
 
-    const fromErrorBook =
-      this.errorBookSource.buildQuestions(snapshot.errorQuestions, questionCount, now, excludeIds);
-    for (let i = 0; i < fromErrorBook.length && questions.length < questionCount; i++) {
-      const question = fromErrorBook[i];
-      if (usedIds.indexOf(question.id) >= 0) {
-        continue;
-      }
-      questions.push(question);
-      usedIds.push(question.id);
-      usedTitles.push(normalizeQuestionTitle(question.title));
+    this.fillLayers(snapshot, profiles, questionCount, now, excludeIds, draft);
+    // Everything the caller has seen is all there is: top the round up from the
+    // best material again rather than hand back a short set. Without this the
+    // third tap on "换一组" would open an empty practice page, permanently.
+    if (draft.questions.length < questionCount) {
+      this.fillLayers(snapshot, profiles, questionCount, now, [], draft);
     }
 
-    for (let i = 0; i < profiles.length && questions.length < questionCount; i++) {
-      const question = this.pickQuestionForProfile(profiles[i], usedIds, now);
-      if (this.containsTitle(usedTitles, question.title)) {
+    return new AdaptivePracticeSession(`practice_${now}`, draft.questions, profiles);
+  }
+
+  /**
+   * One pass over the three material layers, appending into `draft`.
+   *
+   * `excludeIds` is the caller's already-served list; a layer skips those ids and
+   * simply contributes fewer questions. The top-up pass above passes an empty
+   * array, and the id/title guards on `draft` keep that pass from duplicating
+   * anything the first one already produced.
+   */
+  private fillLayers(snapshot: LearningDataSnapshot, profiles: KnowledgePracticeProfile[],
+    questionCount: number, now: number, excludeIds: string[], draft: PracticeDraft): void {
+    const fromErrorBook =
+      this.errorBookSource.buildQuestions(snapshot.errorQuestions, questionCount, now, excludeIds);
+    for (let i = 0; i < fromErrorBook.length && draft.questions.length < questionCount; i++) {
+      const question = fromErrorBook[i];
+      if (draft.usedIds.indexOf(question.id) >= 0) {
         continue;
       }
-      questions.push(question);
-      usedIds.push(question.id);
-      usedTitles.push(normalizeQuestionTitle(question.title));
+      draft.questions.push(question);
+      draft.usedIds.push(question.id);
+      draft.usedTitles.push(normalizeQuestionTitle(question.title));
+    }
+
+    this.fillFromPool(profiles, questionCount, excludeIds, draft);
+
+    for (let i = 0; i < profiles.length && draft.questions.length < questionCount; i++) {
+      const question = this.pickQuestionForProfile(profiles[i], draft.usedIds, excludeIds);
+      if (question === null || this.containsTitle(draft.usedTitles, question.title)) {
+        continue;
+      }
+      draft.questions.push(question);
+      draft.usedIds.push(question.id);
+      draft.usedTitles.push(normalizeQuestionTitle(question.title));
     }
 
     const bank = this.buildQuestionBank();
-    for (let i = 0; i < bank.length && questions.length < questionCount; i++) {
-      if (usedIds.indexOf(bank[i].id) < 0 && !this.containsTitle(usedTitles, bank[i].title)) {
-        questions.push(this.cloneQuestion(bank[i]));
-        usedIds.push(bank[i].id);
-        usedTitles.push(normalizeQuestionTitle(bank[i].title));
+    for (let i = 0; i < bank.length && draft.questions.length < questionCount; i++) {
+      if (excludeIds.indexOf(bank[i].id) < 0 && draft.usedIds.indexOf(bank[i].id) < 0 &&
+        !this.containsTitle(draft.usedTitles, bank[i].title)) {
+        draft.questions.push(this.cloneQuestion(bank[i]));
+        draft.usedIds.push(bank[i].id);
+        draft.usedTitles.push(normalizeQuestionTitle(bank[i].title));
       }
     }
+  }
 
-    return new AdaptivePracticeSession(`practice_${now}`, questions, profiles);
+  /**
+   * Contributes at most one cached question per knowledge point, in the same
+   * weakest-first order the profile layer below uses.
+   *
+   * One per point rather than as many as fit, because this layer's job is to
+   * add material the shipped bank does not have — not to replace it. Filling
+   * the session from the pool would also mean that after a corpus update every
+   * question changes at once, instead of the pool draining gradually.
+   */
+  private fillFromPool(profiles: KnowledgePracticeProfile[], questionCount: number,
+    excludeIds: string[], draft: PracticeDraft): void {
+    for (let i = 0; i < profiles.length && draft.questions.length < questionCount; i++) {
+      const skip = excludeIds.concat(draft.usedIds);
+      const fromPool = this.questionPool.getForTag(profiles[i].tag, skip, 1);
+      for (let j = 0; j < fromPool.length; j++) {
+        const question = fromPool[j];
+        if (this.containsTitle(draft.usedTitles, question.title)) {
+          continue;
+        }
+        draft.questions.push(question);
+        draft.usedIds.push(question.id);
+        draft.usedTitles.push(normalizeQuestionTitle(question.title));
+      }
+    }
+  }
+
+  /**
+   * Digest of the corpus the pool's questions were written from.
+   *
+   * Read only on the synthesis path. `KnowledgeStore.getInstance()` is a real
+   * singleton with a corpus behind it, and resolving it while the practice page
+   * renders its first round would put that work in front of the first question
+   * for a value only the writing side uses.
+   *
+   * Empty until the retrieval index has been built once, and the pool treats an
+   * empty digest as "unknown" rather than as a change — otherwise the first
+   * frame after every launch, which runs before the index exists, would wipe
+   * the cache. The window that leaves open is one launch: a question written
+   * from a previous corpus survives until the next synthesis pass, which is
+   * when the digest arrives and clears it. A stale question is still a coherent
+   * question, so that is a shot at odd content rather than at wrong content.
+   */
+  private corpusFingerprint(): string {
+    return this.knowledge().getFingerprint();
+  }
+
+  /**
+   * The knowledge points a session would rank as weakest, without building one.
+   *
+   * Exists so a caller that wants to stock the pool but has no session in hand —
+   * the agent tool — gets exactly the ranking a session would use, rather than
+   * forming a second opinion about what "weak" means.
+   */
+  previewProfiles(now: number = Date.now()): KnowledgePracticeProfile[] {
+    return this.buildProfiles(this.dataCollectService.collectAllData(), now);
+  }
+
+  /**
+   * Tops the question pool up for the learner's weakest knowledge points.
+   *
+   * Called after a round has been served, never before one: the first frame of
+   * the practice page must not wait on a network round trip. Whatever this adds
+   * is picked up by the *next* `generateSession`, which is what makes "换一组"
+   * visibly produce something new.
+   *
+   * Single-flight — a second caller joins the pass already running rather than
+   * paying for the same knowledge points twice.
+   */
+  async prepareQuestions(profiles: KnowledgePracticeProfile[],
+    tagLimit: number = PREPARE_TAG_LIMIT): Promise<number> {
+    if (this.preparePromise !== null) {
+      return this.preparePromise;
+    }
+    this.preparePromise = this.runSynthesis(profiles, tagLimit);
+    try {
+      return await this.preparePromise;
+    } finally {
+      this.preparePromise = null;
+    }
+  }
+
+  /**
+   * Schedules a pass for the practice page, which does not need the outcome.
+   *
+   * The page is already showing a complete round, so nothing waits on this and
+   * nothing reports back; the same fire-and-forget shape as the retrieval
+   * warm-up, with the real work single-flighted inside `prepareQuestions`. A
+   * pass that finds everything covered costs a few string comparisons.
+   */
+  schedulePrepare(profiles: KnowledgePracticeProfile[],
+    delayMs: number = PRACTICE_PREPARE_DELAY_MS): void {
+    if (profiles.length === 0) {
+      return;
+    }
+    setTimeout(() => {
+      this.prepareQuestions(profiles).catch(() => {
+        // The failure is already latched inside; the page has nothing to do
+        // with it and the round on screen is unaffected either way.
+      });
+    }, delayMs);
+  }
+
+  /**
+   * One pass over the weakest knowledge points that are not covered yet.
+   *
+   * Any failure latches synthesis off for the current backend identity and ends
+   * the pass: a missing credential, an unreachable host or a rejected request
+   * is not going to start working two knowledge points later, and the cost of
+   * being wrong is one skipped pass rather than a request per round forever.
+   */
+  private async runSynthesis(profiles: KnowledgePracticeProfile[], tagLimit: number): Promise<number> {
+    const blockKey = this.aiService().getMode();
+    if (this.synthesisBlockedKey.length > 0 && this.synthesisBlockedKey === blockKey) {
+      return 0;
+    }
+    // The only place the corpus digest is read. A changed corpus drops the whole
+    // pool here, before anything is counted or written, so the pass that follows
+    // regenerates against the material that is actually installed.
+    this.questionPool.setCorpusFingerprint(this.corpusFingerprint());
+    let added = 0;
+    let attemptedPoints = 0;
+    for (let i = 0; i < profiles.length && attemptedPoints < tagLimit; i++) {
+      const profile = profiles[i];
+      if (this.questionPool.countForTag(profile.tag) >= COVERED_QUESTION_COUNT) {
+        continue;
+      }
+      attemptedPoints += 1;
+      this.synthesisAttempts += 1;
+      try {
+        added += await this.synthesizeFor(profile);
+      } catch (e) {
+        this.synthesisBlockedKey = blockKey;
+        this.synthesisLastError = e instanceof Error ? e.message : 'unknown error';
+        break;
+      }
+    }
+    this.synthesisGenerated += added;
+    return added;
+  }
+
+  /**
+   * Retrieves the material for one knowledge point and turns a model reply into
+   * cached questions.
+   *
+   * When retrieval comes back with too little to ground on, nothing is asked:
+   * the corpus does not cover this knowledge point, and the shipped bank is a
+   * better answer than a question written about material the model never saw.
+   */
+  private async synthesizeFor(profile: KnowledgePracticeProfile): Promise<number> {
+    const knowledge = this.knowledge();
+    const hits: KnowledgeHit[] = await knowledge.searchBest(profile.tag, PASSAGE_TOP_K);
+    const passages: SynthesisPassage[] = [];
+    for (let i = 0; i < hits.length; i++) {
+      passages.push(new SynthesisPassage(
+        knowledge.citationOf(hits[i]),
+        hits[i].chunk.knowledgeTag,
+        hits[i].chunk.text,
+      ));
+    }
+    if (!this.synthesizer.isMaterialSufficient(passages)) {
+      return 0;
+    }
+
+    const request = new SynthesisRequest(
+      profile.tag,
+      this.targetDifficulty(profile.mastery),
+      passages,
+      SYNTHESIS_QUESTION_COUNT,
+    );
+    const prompt = this.synthesizer.buildPrompt(request);
+    const messages: AiMessage[] = [];
+    const systemMessage = new AiMessage();
+    systemMessage.role = 'system';
+    systemMessage.content = prompt.system;
+    messages.push(systemMessage);
+    const userMessage = new AiMessage();
+    userMessage.role = 'user';
+    userMessage.content = prompt.user;
+    messages.push(userMessage);
+
+    const result = await this.aiService().chat(messages, undefined, SYNTHESIS_MAX_TOKENS);
+    const questions = this.synthesizer.parseResponse(result.content, request);
+    return this.questionPool.add(profile.tag, questions);
+  }
+
+  /**
+   * Difficulty the prompt asks for, from the mastery the profile layer already
+   * ranks by: a weak knowledge point gets the entry level, a strong one gets a
+   * challenge. Only the wording of the request changes here — nothing is
+   * reordered or filtered by it.
+   */
+  private targetDifficulty(mastery: number): PracticeDifficulty {
+    if (mastery < DIFFICULTY_BASIC_MAX) {
+      return PracticeDifficulty.BASIC;
+    }
+    if (mastery < DIFFICULTY_MEDIUM_MAX) {
+      return PracticeDifficulty.MEDIUM;
+    }
+    return PracticeDifficulty.HARD;
+  }
+
+  /** The synthesis client, injected when a caller supplied one. */
+  private aiService(): AiService {
+    if (this.aiServiceRef === null) {
+      this.aiServiceRef = this.injectedAiService === null ? new AiService() : this.injectedAiService;
+    }
+    return this.aiServiceRef;
+  }
+
+  /** The retriever, injected when a caller supplied one, else the app's singleton. */
+  private knowledge(): KnowledgeStore {
+    if (this.knowledgeStoreRef === null) {
+      this.knowledgeStoreRef = this.injectedKnowledgeStore === null
+        ? KnowledgeStore.getInstance() : this.injectedKnowledgeStore;
+    }
+    return this.knowledgeStoreRef;
+  }
+
+  /** Counters behind the synthesis side, for tests and diagnostics. */
+  getSynthesisStats(): SynthesisStats {
+    const stats = new SynthesisStats();
+    stats.pooled = this.questionPool.size();
+    stats.attempts = this.synthesisAttempts;
+    stats.generated = this.synthesisGenerated;
+    stats.blocked = this.synthesisBlockedKey.length > 0;
+    stats.lastError = this.synthesisLastError;
+    return stats;
+  }
+
+  /**
+   * Clears the failure latch so the next pass tries again. Exists because the
+   * learner can fix the cause — configuring a key, bringing the backend up —
+   * without the app being able to notice.
+   */
+  resetSynthesisBlock(): void {
+    this.synthesisBlockedKey = '';
   }
 
   submitAnswer(question: AdaptivePracticeQuestion, selectedIndex: number,
@@ -385,24 +776,45 @@ export class AdaptivePracticeService {
     return reason;
   }
 
+  /**
+   * The best question for one knowledge point, or null when the best one it has
+   * already went out this round. Returning null rather than a repeat lets the
+   * caller fall through to the next layer, which is what keeps "换一组" from
+   * showing a card the learner has just answered.
+   */
   private pickQuestionForProfile(profile: KnowledgePracticeProfile, usedIds: string[],
-    now: number): AdaptivePracticeQuestion {
+    excludeIds: string[]): AdaptivePracticeQuestion | null {
     const bank = this.buildQuestionBank();
     for (let i = 0; i < bank.length; i++) {
-      if (usedIds.indexOf(bank[i].id) < 0 && bank[i].knowledgeTag === profile.tag) {
+      if (usedIds.indexOf(bank[i].id) < 0 && excludeIds.indexOf(bank[i].id) < 0 &&
+        bank[i].knowledgeTag === profile.tag) {
         return this.cloneQuestion(bank[i]);
       }
     }
 
     for (let i = 0; i < bank.length; i++) {
-      if (usedIds.indexOf(bank[i].id) < 0 && this.isRelatedTag(profile.tag, bank[i].knowledgeTag)) {
+      if (usedIds.indexOf(bank[i].id) < 0 && excludeIds.indexOf(bank[i].id) < 0 &&
+        this.isRelatedTag(profile.tag, bank[i].knowledgeTag)) {
         return this.cloneQuestion(bank[i]);
       }
     }
 
+    // "The bank has nothing for this knowledge point" and "this knowledge point's
+    // question has already been served" need different fallbacks. The first gets
+    // the review prompt below; the second returns null so a real question from
+    // the bank layer takes the slot instead of the same prompt card coming back.
+    if (this.bankCoversTag(bank, profile.tag)) {
+      return null;
+    }
+
+    // The placeholder id is derived from the tag, never from the clock: a
+    // clock-derived id could never be excluded, so "换一组" would keep serving it.
+    const placeholderId = `q_custom_${profile.tag}`;
+    if (usedIds.indexOf(placeholderId) >= 0 || excludeIds.indexOf(placeholderId) >= 0) {
+      return null;
+    }
     return new AdaptivePracticeQuestion(
-      // `now`, not Date.now(): the whole session is reproducible for a given now.
-      `q_custom_${profile.tag}_${now}`,
+      placeholderId,
       `关于「${profile.tag}」的复习，最有效的第一步是什么？`,
       ['直接刷高难题', '先回顾概念和典型例题，再做针对性练习', '只看答案解析', '暂时跳过该知识点'],
       1,
@@ -412,6 +824,20 @@ export class AdaptivePracticeService {
       `对薄弱知识点应先建立概念框架，再用少量典型题验证掌握情况。`,
       `建议今天围绕「${profile.tag}」完成 3 道基础题和 2 道变式题。`,
     );
+  }
+
+  /**
+   * Whether the shipped bank can serve this knowledge point at all, ignoring what
+   * has already been picked. Always called on a freshly built bank, so the answer
+   * is a property of the corpus rather than of the current round.
+   */
+  private bankCoversTag(bank: AdaptivePracticeQuestion[], tag: string): boolean {
+    for (let i = 0; i < bank.length; i++) {
+      if (bank[i].knowledgeTag === tag || this.isRelatedTag(tag, bank[i].knowledgeTag)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private buildQuestionBank(): AdaptivePracticeQuestion[] {
@@ -583,7 +1009,11 @@ export class AdaptivePracticeService {
       `${question.attribution.causeLabel}（置信度 ${question.attribution.confidence}%）：${question.attribution.remediation}` :
       '自适应练习中答错，建议回看解析并完成同类训练。';
 
-    const recordId = `adaptive_${now}_${Math.random().toString(36).substring(2, 8)}`;
+    // Deterministic on purpose. `now` is injected by the caller and the title is
+    // part of the question, so the same session always mints the same id — a
+    // random suffix made this write path impossible to assert offline.
+    const titleKey = normalizeQuestionTitle(question.title);
+    const recordId = `adaptive_${now}_${stableTextHash(titleKey.length > 0 ? titleKey : question.id)}`;
     records.unshift({
       id: recordId,
       title: question.title,
@@ -703,7 +1133,7 @@ export class AdaptivePracticeService {
   // a half-width question mark as corruption.
 
   private cloneQuestion(question: AdaptivePracticeQuestion): AdaptivePracticeQuestion {
-    return new AdaptivePracticeQuestion(
+    const copy = new AdaptivePracticeQuestion(
       question.id,
       question.title,
       [...question.options],
@@ -715,6 +1145,10 @@ export class AdaptivePracticeService {
       question.recommendation,
       question.sourceRecordId,
     );
+    // Provenance travels with the copy — a clone is the same question, and an
+    // answer the learner cannot trace back is worth less than one they can.
+    copy.citation = question.citation;
+    return copy;
   }
 
   private containsTitle(titles: string[], title: string): boolean {

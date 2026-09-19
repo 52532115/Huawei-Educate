@@ -144,7 +144,7 @@ class AdaptivePracticeQuestion {
     sourceRecordId = '') {
     Object.assign(this, { id, title, options, correctIndex, knowledgeTag, difficulty, source, explanation,
       recommendation, selectedIndex: -1, isSubmitted: false, syncedToErrorBook: false, sourceRecordId,
-      masteryRecorded: false });
+      masteryRecorded: false, citation: '' });
   }
 }
 class KnowledgePracticeProfile {
@@ -175,6 +175,15 @@ class ErrorBookPracticeSource {
 }
 function normalizeQuestionTitle(title) { return title.toString().trim().replace(/\\s+/g, ' '); }
 function normalizeKnowledgeTag(tag) { return (tag || '').toString().trim() || '未分类'; }
+// Same algorithm as the real one (base36 rolling hash): the service uses it to
+// mint deterministic error-book ids, so the id shape has to match production.
+function stableTextHash(text) {
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) % 2147483647;
+  }
+  return hash.toString(36);
+}
 // Stubbed, not real: this file runs with an empty error book and no practice
 // history, so every knowledge point is a cold start and the seeded heuristic
 // values are exactly what these cases have always asserted. The real store's
@@ -190,6 +199,46 @@ class PracticeHistoryStore {
 }
 class LearnerProfileStore {
   recordPracticeWeakPoints() { }
+}
+// The background synthesis path. The service constructs a pool and a
+// synthesizer unconditionally, so both names have to be in scope even though
+// this harness never asks for a question to be written. The pool stub answers
+// "nothing cached" — a fresh install's state — so the sessions asserted below
+// are the ones this builder produced before synthesis existed.
+class GeneratedQuestionPool {
+  setCorpusFingerprint() {}
+  getCorpusFingerprint() { return ''; }
+  add() { return 0; }
+  getForTag() { return []; }
+  countForTag() { return 0; }
+  size() { return 0; }
+  tagCount() { return 0; }
+  reset() {}
+  getSaveStats() { return [0, 0]; }
+}
+class PracticeQuestionSynthesizer {
+  isMaterialSufficient() { return false; }
+  buildPrompt() { throw new Error('synthesis is not exercised here'); }
+  parseResponse() { return []; }
+  citationOf() { return ''; }
+}
+class SynthesisPassage {
+  constructor(citation, knowledgeTag, text) { Object.assign(this, { citation, knowledgeTag, text }); }
+}
+class SynthesisRequest {
+  constructor(tag, difficulty, passages, count) { Object.assign(this, { tag, difficulty, passages, count }); }
+}
+const SYNTHESIS_QUESTION_COUNT = 3;
+// Only reached through the delayed background pass; both settle on "no work".
+class AiService {
+  getMode() { return 'test'; }
+  async chat() { throw new Error('no AI in these tests'); }
+}
+class KnowledgeStore {
+  static getInstance() { return new KnowledgeStore(); }
+  getFingerprint() { return ''; }
+  async searchBest() { return []; }
+  citationOf() { return ''; }
 }
 const DEFAULT_SEED_MASTERY = 68;
 function buildPracticeHistoryLine() { return ''; }

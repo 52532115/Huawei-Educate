@@ -69,6 +69,13 @@ export class AdaptivePracticeQuestion {
    * a handed-over session arrives unanswered, exactly like isSubmitted.
    */
   masteryRecorded: boolean;
+  /**
+   * Where a synthesized question came from — the lecture headings its material
+   * was retrieved from. '' for every question that was not written by the
+   * model, which is why it is a field with a default rather than a constructor
+   * parameter: the existing four call sites keep working untouched.
+   */
+  citation: string = '';
 
   constructor(
     id: string,

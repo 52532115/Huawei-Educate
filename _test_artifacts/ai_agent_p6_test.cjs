@@ -78,7 +78,7 @@ class AdaptivePracticeQuestion {
     sourceRecordId = '') {
     Object.assign(this, { id, title, options, correctIndex, knowledgeTag, difficulty, source, explanation,
       recommendation, selectedIndex: -1, isSubmitted: false, syncedToErrorBook: false, sourceRecordId,
-      masteryRecorded: false });
+      masteryRecorded: false, citation: '' });
   }
 }
 `);
@@ -413,7 +413,7 @@ class AdaptivePracticeQuestion {
     sourceRecordId = '') {
     Object.assign(this, { id, title, options, correctIndex, knowledgeTag, difficulty, source, explanation,
       recommendation, selectedIndex: -1, isSubmitted: false, syncedToErrorBook: false, sourceRecordId,
-      masteryRecorded: false });
+      masteryRecorded: false, citation: '' });
   }
 }
 class KnowledgePracticeProfile {
@@ -442,7 +442,8 @@ class ErrorBookPracticeCandidate {
 global.ErrorQuestionItem = ErrorQuestionItem;
 global.AdaptivePracticeQuestion = AdaptivePracticeQuestion;
 
-const { ErrorBookPracticeSource, normalizeQuestionTitle, normalizeKnowledgeTag } = global.__sourceModule;
+const { ErrorBookPracticeSource, normalizeQuestionTitle, normalizeKnowledgeTag,
+  stableTextHash } = global.__sourceModule;
 const { PracticeHistoryStore, DEFAULT_SEED_MASTERY, buildPracticeHistoryLine } = global.__historyModule;
 const { LearnerProfileStore } = global.__profileModule;
 
@@ -453,6 +454,47 @@ class DataCollectService {
 }
 class ErrorAttributionService {
   diagnosePracticeQuestion() { return { causeLabel: '测试归因', confidence: 80, remediation: '复习', evidence: '答错' }; }
+}
+// The background synthesis path. The service constructs a pool and a
+// synthesizer unconditionally, so both names must exist here even though these
+// tests never ask for a question to be written. The pool answers "nothing
+// cached", which is a fresh install's state: every session below is therefore
+// the session this builder produced before synthesis existed.
+class GeneratedQuestionPool {
+  setCorpusFingerprint() {}
+  getCorpusFingerprint() { return ''; }
+  add() { return 0; }
+  getForTag() { return []; }
+  countForTag() { return 0; }
+  size() { return 0; }
+  tagCount() { return 0; }
+  reset() {}
+  getSaveStats() { return [0, 0]; }
+}
+class PracticeQuestionSynthesizer {
+  isMaterialSufficient() { return false; }
+  buildPrompt() { throw new Error('synthesis is not exercised here'); }
+  parseResponse() { return []; }
+  citationOf() { return ''; }
+}
+class SynthesisPassage {
+  constructor(citation, knowledgeTag, text) { Object.assign(this, { citation, knowledgeTag, text }); }
+}
+class SynthesisRequest {
+  constructor(tag, difficulty, passages, count) { Object.assign(this, { tag, difficulty, passages, count }); }
+}
+const SYNTHESIS_QUESTION_COUNT = 3;
+// Reached only by the delayed background pass the view model schedules. Both
+// answer "nothing to do", so that pass settles without touching the network.
+class AiService {
+  getMode() { return 'test'; }
+  async chat() { throw new Error('no AI in these tests'); }
+}
+class KnowledgeStore {
+  static getInstance() { return new KnowledgeStore(); }
+  getFingerprint() { return ''; }
+  async searchBest() { return []; }
+  citationOf() { return ''; }
 }
 `;
 }
@@ -662,12 +704,73 @@ check('I 确定性', '同输入同 now → 题目 id 序列、画像值与顺序
   { first: firstRun.questions.map(q => q.id), second: secondRun.questions.map(q => q.id) },
   'identical');
 
-check('I 确定性', '占位题 id 使用注入的 now，不再读系统时钟',
-  service.generateSession(6, NOW).questions.filter(q => q.id.indexOf('q_custom_') >= 0)
-    .every(q => q.id.indexOf(String(NOW)) >= 0) ||
-  service.generateSession(6, NOW).questions.filter(q => q.id.indexOf('q_custom_') >= 0).length === 0,
-  service.generateSession(6, NOW).questions.map(q => q.id).filter(id => id.indexOf('q_custom_') >= 0),
-  'no clock reads');
+// The placeholder-id assertion that used to live here ("the id contains the
+// injected now") is gone: it only ever ran in worlds that produce no placeholder
+// at all, so it was vacuously true, and it pinned the wrong property besides. The
+// placeholder id now carries no timestamp — group J asserts that against a world
+// that actually builds one, which also proves the id can be excluded.
+
+// J — "换一组" must walk down the material, and must never run dry.
+resetWorld();
+global.__snapshot = { examScores: [], errorQuestions: [], courseProgress: [], totalStudyTime: 0 };
+service = new (loadService().AdaptivePracticeService)();
+const round1 = service.generateSession(6, NOW).questions.map(q => q.id);
+const round2 = service.generateSession(6, NOW, round1).questions.map(q => q.id);
+check('J 换一组轮换', '传入这一组的 6 个 id 后返回另一组 6 题（冷启动、无错题）',
+  round1.length === 6 && round2.length === 6 && round2.every(id => round1.indexOf(id) < 0),
+  { round1, round2, overlap: round2.filter(id => round1.indexOf(id) >= 0) },
+  'two disjoint rounds of 6');
+
+check('J 换一组轮换', '题库取尽后回到第一组，而不是给出空组',
+  service.generateSession(6, NOW, round1.concat(round2)).questions.map(q => q.id).join('|') === round1.join('|'),
+  service.generateSession(6, NOW, round1.concat(round2)).questions.map(q => q.id),
+  round1);
+
+check('J 换一组轮换', '还有真题可出时不出复习提示卡（提示卡只是兜底）',
+  round1.every(id => id.indexOf('q_custom_') < 0) && round2.every(id => id.indexOf('q_custom_') < 0),
+  { round1, round2 }, 'no placeholders');
+
+// A knowledge point the shipped bank cannot cover at all still gets its review
+// prompt. Its id is tag-derived rather than clock-derived, which is what makes it
+// excludable — a clock-derived id changed on every call and could never be skipped.
+resetWorld();
+global.__snapshot = {
+  examScores: [], errorQuestions: [], courseProgress: [{ name: '高等数学', progress: 50 }], totalStudyTime: 0,
+};
+service = new (loadService().AdaptivePracticeService)();
+const promptRound = service.generateSession(6, NOW).questions.map(q => q.id);
+check('J 换一组轮换', '题库覆盖不到的知识点仍出提示卡，且 id 不含时钟（换 now 不变）',
+  promptRound.filter(id => id.indexOf('q_custom_') >= 0).join('|') === 'q_custom_高等数学' &&
+  service.generateSession(6, NOW + 99 * DAY).questions.map(q => q.id)
+    .filter(id => id.indexOf('q_custom_') >= 0).join('|') === 'q_custom_高等数学',
+  {
+    now: promptRound,
+    later: service.generateSession(6, NOW + 99 * DAY).questions.map(q => q.id)
+      .filter(id => id.indexOf('q_custom_') >= 0),
+  },
+  "'q_custom_高等数学' at both timestamps");
+
+check('J 换一组轮换', '提示卡同样参与排除，不会被反复端上来',
+  service.generateSession(6, NOW, promptRound).questions.every(q => q.id !== 'q_custom_高等数学'),
+  service.generateSession(6, NOW, promptRound).questions.map(q => q.id),
+  'no q_custom_高等数学');
+
+// The appended error-book id used to carry a Math.random() suffix, which made this
+// write path impossible to assert and broke "same inputs → same output" for the service.
+function appendedRecordId() {
+  resetWorld();
+  global.__snapshot = { examScores: [], errorQuestions: [], courseProgress: [], totalStudyTime: 0 };
+  const svc = new (loadService().AdaptivePracticeService)();
+  const q = svc.generateSession(6, NOW).questions[0];
+  svc.submitAnswer(q, (q.correctIndex + 1) % q.options.length, NOW);
+  const book = JSON.parse(global.AppStorage.data.get('ErrorQuestions') || '[]');
+  return book.length === 1 ? book[0].id : null;
+}
+const appendedA = appendedRecordId();
+const appendedB = appendedRecordId();
+check('J 换一组轮换', '追加的错题记录 id 可复现（同一 now + 同一题 → 同一 id）',
+  appendedA !== null && appendedA === appendedB && appendedA.indexOf(`adaptive_${NOW}_`) === 0,
+  { first: appendedA, second: appendedB }, 'identical ids');
 
 // ---------- H. copy and static checks ----------
 
@@ -733,6 +836,11 @@ check('H 文案与静态', '服务端不再自带第二套乱码判定（tag 归
   serviceSrc.indexOf('containsMojibake') < 0 && serviceSrc.indexOf('normalizeKnowledgeTag(item.category)') >= 0,
   { localGuard: serviceSrc.indexOf('containsMojibake') >= 0 },
   { localGuard: false });
+
+check('H 文案与静态', 'service 不用随机数（错题记录 id 必须可复现，now 全程注入）',
+  serviceSrc.indexOf('Math.random') < 0,
+  { random: serviceSrc.indexOf('Math.random') >= 0 },
+  { random: false });
 
 const viewSrc = stripArkTsComments(fs.readFileSync(
   path.join(root, 'features/aiagent/src/main/ets/components/AdaptivePracticeView.ets'), 'utf8'));

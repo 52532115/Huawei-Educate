@@ -123,6 +123,22 @@ export function normalizeQuestionTitle(title: string): string {
  * produces the same question order. That is what makes "review priority"
  * explainable and testable.
  */
+/**
+ * Polynomial rolling hash in base36 — stable across runs, unlike a
+ * Date.now()+random id. Arithmetic only (mod 2^31-1), no bitwise operators.
+ *
+ * Exported because AdaptivePracticeService mints error-book record ids from it
+ * too: a second implementation would let the same question hash differently
+ * depending on which side wrote the id, and the record would be appended twice.
+ */
+export function stableTextHash(text: string): string {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = (hash * 31 + text.charCodeAt(i)) % 2147483647;
+  }
+  return hash.toString(36);
+}
+
 export class ErrorBookPracticeSource {
   /**
    * Builds up to `count` questions, best-first. Returns fewer when the error
@@ -424,7 +440,7 @@ export class ErrorBookPracticeSource {
   private questionIdFor(candidate: ErrorBookPracticeCandidate): string {
     return candidate.recordId.length > 0
       ? `q_err_${candidate.recordId}`
-      : `q_err_h_${this.stableHash(candidate.normalizedTitle)}`;
+      : `q_err_h_${stableTextHash(candidate.normalizedTitle)}`;
   }
 
   private toQuestion(candidate: ErrorBookPracticeCandidate): AdaptivePracticeQuestion {
@@ -472,15 +488,4 @@ export class ErrorBookPracticeSource {
     return DEFAULT_RECOMMENDATION;
   }
 
-  /**
-   * Polynomial rolling hash in base36 — stable across runs, unlike
-   * Date.now()-based ids. Arithmetic only (mod 2^31-1), no bitwise operators.
-   */
-  private stableHash(text: string): string {
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-      hash = (hash * 31 + text.charCodeAt(i)) % 2147483647;
-    }
-    return hash.toString(36);
-  }
 }

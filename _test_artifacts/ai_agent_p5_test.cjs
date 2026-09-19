@@ -11,15 +11,6 @@ const root = path.resolve(__dirname, '..');
 const results = [];
 let failures = 0;
 
-/**
- * Masks the random suffix the service appends to newly created error-book ids.
- * It only exists to keep ids unique, so it carries no assertion value — and
- * leaving it in `actual` would rewrite the result file on every run.
- */
-function maskRandomIdSuffix(id) {
-  return typeof id === 'string' ? id.replace(/_[a-z0-9]{6}$/, '_<random>') : id;
-}
-
 function check(group, name, condition, actual, expected) {
   results.push({ group, name, status: condition ? 'PASS' : 'FAIL', actual, expected });
   if (!condition) failures++;
@@ -83,7 +74,7 @@ class AdaptivePracticeQuestion {
     sourceRecordId = '') {
     Object.assign(this, { id, title, options, correctIndex, knowledgeTag, difficulty, source, explanation,
       recommendation, selectedIndex: -1, isSubmitted: false, syncedToErrorBook: false, sourceRecordId,
-      masteryRecorded: false });
+      masteryRecorded: false, citation: '' });
   }
 }
 class ErrorBookPracticeCandidate {
@@ -310,7 +301,8 @@ function servicePrelude() {
     'const Logger = { error() {}, info() {} };');
   return `
 ${modelsPrelude}
-const { ErrorBookPracticeSource, normalizeQuestionTitle, SOURCE_ERROR_BOOK, normalizeKnowledgeTag } = global.__sourceModule;
+const { ErrorBookPracticeSource, normalizeQuestionTitle, SOURCE_ERROR_BOOK, normalizeKnowledgeTag,
+  stableTextHash } = global.__sourceModule;
 const { PracticeHistoryStore, DEFAULT_SEED_MASTERY, buildPracticeHistoryLine } = global.__historyModule;
 const { LearnerProfileStore } = global.__profileModule;
 class DataCollectService {
@@ -320,6 +312,47 @@ class DataCollectService {
 }
 class ErrorAttributionService {
   diagnosePracticeQuestion() { return { causeLabel: '测试归因', confidence: 80, remediation: '复习', evidence: '答错' }; }
+}
+// The background synthesis path. The service constructs a pool and a
+// synthesizer unconditionally, so both names must exist here even though these
+// tests never ask for a question to be written. The pool answers "nothing
+// cached", which is a fresh install's state: every session below is therefore
+// the session this builder produced before synthesis existed.
+class GeneratedQuestionPool {
+  setCorpusFingerprint() {}
+  getCorpusFingerprint() { return ''; }
+  add() { return 0; }
+  getForTag() { return []; }
+  countForTag() { return 0; }
+  size() { return 0; }
+  tagCount() { return 0; }
+  reset() {}
+  getSaveStats() { return [0, 0]; }
+}
+class PracticeQuestionSynthesizer {
+  isMaterialSufficient() { return false; }
+  buildPrompt() { throw new Error('synthesis is not exercised here'); }
+  parseResponse() { return []; }
+  citationOf() { return ''; }
+}
+class SynthesisPassage {
+  constructor(citation, knowledgeTag, text) { Object.assign(this, { citation, knowledgeTag, text }); }
+}
+class SynthesisRequest {
+  constructor(tag, difficulty, passages, count) { Object.assign(this, { tag, difficulty, passages, count }); }
+}
+const SYNTHESIS_QUESTION_COUNT = 3;
+// Reached only by the delayed background pass the view model schedules. Both
+// answer "nothing to do", so that pass settles without touching the network.
+class AiService {
+  getMode() { return 'test'; }
+  async chat() { throw new Error('no AI in these tests'); }
+}
+class KnowledgeStore {
+  static getInstance() { return new KnowledgeStore(); }
+  getFingerprint() { return ''; }
+  async searchBest() { return []; }
+  citationOf() { return ''; }
 }
 `;
 }
@@ -433,13 +466,11 @@ const afterOrphan = readErrorBook();
 check('F 回写', '原记录已被删除时回退为追加，不丢数据',
   afterOrphan.length === 1 && afterOrphan[0].source === 'adaptive_practice',
   { count: afterOrphan.length, source: afterOrphan[0].source }, { count: 1, source: 'adaptive_practice' });
-// The appended record's id ends in a random suffix (by design), so it is masked
-// in the reported value — otherwise every run rewrites the result file and a
-// stable artifact turns into per-run noise. The identity check itself still runs
-// against the real ids.
+// The appended id is derived from the injected `now` and the question text, so
+// it is stable across runs and is reported verbatim.
 check('F 回写', '追加后题目重新指向新记录，避免再次重复写入',
   qOrphan.sourceRecordId === afterOrphan[0].id,
-  maskRandomIdSuffix(qOrphan.sourceRecordId), maskRandomIdSuffix(afterOrphan[0].id));
+  qOrphan.sourceRecordId, afterOrphan[0].id);
 
 const bankQuestion = new global.AdaptivePracticeQuestion(
   'q_bank', '题库题', ['A', 'B', 'C', 'D'], 1, '数据结构', '基础', '来自题库', '解析', '建议', '');
@@ -476,8 +507,8 @@ service.submitAnswer(dupeB, 0, NOW);
 const afterDupe = readErrorBook();
 check('F 回写', '同题以不同题目 id 再答错时不新增重复条目',
   afterDupe.length === 1 && afterDupe[0].wrongCount === 2 && afterDupe[0].id === dupeA.sourceRecordId,
-  { count: afterDupe.length, wrongCount: afterDupe[0].wrongCount, id: maskRandomIdSuffix(afterDupe[0].id) },
-  { count: 1, wrongCount: 2, id: maskRandomIdSuffix(dupeA.sourceRecordId) });
+  { count: afterDupe.length, wrongCount: afterDupe[0].wrongCount, id: afterDupe[0].id },
+  { count: 1, wrongCount: 2, id: dupeA.sourceRecordId });
 
 const reviewRecord = {
   id: 'rev1', title: '答对的错题', option: ['A', 'B', 'C', 'D'], rightQues: 2,
@@ -553,6 +584,38 @@ check('H 换一组', 'ViewModel 选选项后可提交判分',
   selectedIndex === 1 && didSubmit === true && vm.getCurrentQuestion().isSubmitted === true,
   { selectedIndex: selectedIndex, didSubmit: didSubmit, isSubmitted: vm.getCurrentQuestion().isSubmitted },
   { selectedIndex: 1, didSubmit: true, isSubmitted: true });
+
+// The reported defect: with no error book at all, "换一组" handed back the very
+// same six cards, because only the error-book layer honoured the skip list while
+// the profile and shipped-bank layers restarted from the top every time.
+global.AppStorage.data.delete('PracticeHistory');
+global.AppStorage.data.delete('LearnerProfile');
+global.AppStorage.data.delete('ErrorQuestions');
+global.AppStorage.data.delete('PendingPracticeSession');
+fileMap.clear();
+global.__snapshot = { examScores: [], errorQuestions: [], courseProgress: [], totalStudyTime: 0 };
+const bankOnly = new vmMod.AdaptivePracticeViewModel();
+const bankFirst = bankOnly.session.questions.map((q) => q.id).join('|');
+bankOnly.resetSession();
+const bankSecond = bankOnly.session.questions.map((q) => q.id).join('|');
+check('H 换一组', '无错题时换一组也给出不同的一组（题库层同样参与轮换）',
+  bankFirst !== bankSecond && bankSecond.split('|').length === 6 &&
+  bankSecond.split('|').every((id) => bankFirst.split('|').indexOf(id) < 0),
+  { first: bankFirst, second: bankSecond }, 'disjoint, 6 each');
+
+bankOnly.resetSession();
+const bankThird = bankOnly.session.questions.map((q) => q.id).join('|');
+check('H 换一组', '题目取尽后轮换回到起点，且始终满 6 题（不会卡在空组）',
+  bankThird === bankFirst && bankThird.split('|').length === 6,
+  { first: bankFirst, third: bankThird }, 'rotation restarts at the first round');
+
+// Guards the rotation reset itself: if the skip list only ever grew, every round
+// from here on would be the same one again.
+bankOnly.resetSession();
+const bankFourth = bankOnly.session.questions.map((q) => q.id).join('|');
+check('H 换一组', '跳过列表会随轮换重置（第四轮回到第二组，而不是永远停在第一组）',
+  bankFourth === bankSecond,
+  { first: bankFirst, second: bankSecond, fourth: bankFourth }, 'back to the second round');
 
 // G. static checks
 const sourceSrc = fs.readFileSync(path.join(root, 'features/aiagent/src/main/ets/service/ErrorBookPracticeSource.ets'), 'utf8');

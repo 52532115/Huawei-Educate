@@ -6,7 +6,6 @@
 import { AdaptivePracticeService } from '../service/AdaptivePracticeService';
 import { ErrorAttributionService } from '../service/ErrorAttributionService';
 import { PracticeSessionStore } from '../service/PracticeSessionStore';
-import { SOURCE_ERROR_BOOK } from '../service/ErrorBookPracticeSource';
 import { PracticeHistoryTotals } from '../service/PracticeHistoryStore';
 import {
   AdaptivePracticeQuestion,
@@ -39,29 +38,61 @@ export class AdaptivePracticeViewModel {
     this.currentIndex = 0;
     this.isFinished = false;
     this.attributionUpdatedCount = 0;
-    this.seenQuestionIds = this.collectErrorBookIds(this.session);
+    this.seenQuestionIds = this.collectQuestionIds(this.session);
     this.historyTotals = this.practiceService.getHistoryTotals();
+    this.prepareNextRound();
   }
 
+  /**
+   * Asks the service to stock material for the next round, in the background.
+   *
+   * Neither awaited nor reported: this round is already complete, so the learner
+   * waits for nothing, and whatever comes back shows up the next time they tap
+   * "换一组". That ordering is the point — paying for questions after the round
+   * rather than before it is what keeps the page opening instantly.
+   */
+  private prepareNextRound(): void {
+    this.practiceService.schedulePrepare(this.session.profiles);
+  }
+
+  /**
+   * Serves a fresh round, skipping everything already shown in this sitting.
+   *
+   * Every layer of the generator honours the skip list — not just the error book
+   * — because the shipped bank holds about a dozen questions: without this,
+   * "换一组" on a cold install handed back the very same six cards.
+   */
   resetSession(): void {
-    // Error-book selection is deterministic, so without this the same top N
-    // would come back on every "换一组".
-    const next = this.practiceService.generateSession(6, Date.now(), this.seenQuestionIds);
-    const nextIds = this.collectErrorBookIds(next);
-    // No unseen mistakes left: start the rotation over rather than repeat forever.
-    this.seenQuestionIds = nextIds.length > 0 ? this.seenQuestionIds.concat(nextIds) : [];
+    const seen = this.seenQuestionIds;
+    const next = this.practiceService.generateSession(6, Date.now(), seen);
+    const allIds = this.collectQuestionIds(next);
+    // The service had to fall back to repeats, i.e. the pool is exhausted: start
+    // the rotation over from this round. Growing the list forever would instead
+    // leave every later round empty.
+    let reused = false;
+    const fresh: string[] = [];
+    for (let i = 0; i < allIds.length; i++) {
+      if (seen.indexOf(allIds[i]) >= 0) {
+        reused = true;
+      } else if (fresh.indexOf(allIds[i]) < 0) {
+        fresh.push(allIds[i]);
+      }
+    }
+    this.seenQuestionIds = reused ? allIds : seen.concat(fresh);
     this.session = next;
     this.currentIndex = 0;
     this.isFinished = false;
+    // The round just handed out consumed whatever the pool had; ask for more so
+    // the *next* tap has something new to show.
+    this.prepareNextRound();
   }
 
-  private collectErrorBookIds(session: AdaptivePracticeSession): string[] {
+  private collectQuestionIds(session: AdaptivePracticeSession): string[] {
     const ids: string[] = [];
     for (let i = 0; i < session.questions.length; i++) {
-      const question = session.questions[i];
-      if (question.source === SOURCE_ERROR_BOOK && this.seenQuestionIds.indexOf(question.id) < 0 &&
-        ids.indexOf(question.id) < 0) {
-        ids.push(question.id);
+      const id = session.questions[i].id;
+      if (ids.indexOf(id) < 0) {
+        ids.push(id);
       }
     }
     return ids;

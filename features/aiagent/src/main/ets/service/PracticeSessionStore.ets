@@ -35,6 +35,8 @@ interface PracticeQuestionRecord {
   /** Link back to the error-book record; dropped here would re-append on every wrong answer. */
   sourceRecordId?: string;
   syncedToErrorBook?: boolean;
+  /** Lecture headings a model-written question was grounded on; '' otherwise. */
+  citation?: string;
 }
 
 interface KnowledgeProfileRecord {
