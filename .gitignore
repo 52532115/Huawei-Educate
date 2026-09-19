@@ -21,6 +21,10 @@ _test_artifacts/*.log
 # 一旦入库等于泄露,而且文件名看着人畜无害。永远忽略。
 _test_artifacts/*.env
 
+# 评测脚本缓存的真实嵌入向量（几百 KB~MB，可随时重算，但要花钱重嵌）。
+# 是产物不是源码，不入库。
+_test_artifacts/*.cache.json
+
 # WorkBuddy 的本地工作记忆(工程笔记,非项目交付物)
 /.workbuddy/
 
