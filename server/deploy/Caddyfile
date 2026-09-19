@@ -1,0 +1,43 @@
+# Caddy 反代配置（自动 HTTPS）。
+#
+# Caddy 会自动向 Let's Encrypt 申请并续期证书，所以 API_DOMAIN 必须是一个
+# 真的解析到本机的域名，且有 80/443 可达。想用 IP 试的话把 API_DOMAIN 设为
+# 本机 IP，Caddy 会退化成内部自签证书——客户端会因此报证书错误，
+# 所以正式验证请用域名。
+#
+# 由 docker-compose.yml 的 tls profile 挂载进来。
+
+{
+	# 证书到期提醒发这里。留空也可以，只是收不到提醒。
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy api:8787 {
+		# 关键：禁用响应缓冲。SSE 靠的就是「边生成边发」，
+		# 反代一旦攒够缓冲再发，App 侧就会退化成「等半天、然后整段蹦出来」。
+		flush_interval -1
+	}
+
+	# 不对外暴露 Server 头，少给一点指纹信息。
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+	}
+
+	log {
+		output stderr
+		format json
+	}
+
+	# 注意（重要）：
+	# 后端对客户端 IP 的判断**刻意不读 X-Forwarded-For**，用的是 socket 地址
+	# （见 src/README 的安全说明——那个头谁都能伪造）。
+	# 后果是：走了本反代之后，所有 App 在限流器眼里都是同一个 IP，
+	# RATE_LIMIT_PER_MINUTE 实际上变成了**全局**上限，而不是每人一份。
+	# 几个人用的演示/答辩场景完全够用（默认 120/分钟）；
+	# 若要真的按人限流，要么在 Caddy 侧加限流，要么给后端加一个显式的
+	# 「信任几跳反代」开关——目前没做，是有意留的边界。
+}

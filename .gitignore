@@ -17,6 +17,10 @@ _test_artifacts/*_test_result.json
 # 本地构建日志(真机验证的输出,可随时重跑,且通常是 UTF-16LE 不好 diff)
 _test_artifacts/*.log
 
+# 体检/变异脚本生成的临时 env 样本。里面是真实密钥的副本(从 server/.env 抄出来的),
+# 一旦入库等于泄露,而且文件名看着人畜无害。永远忽略。
+_test_artifacts/*.env
+
 # WorkBuddy 的本地工作记忆(工程笔记,非项目交付物)
 /.workbuddy/
 
@@ -27,3 +31,7 @@ server/.env.*
 !server/.env.example
 server/node_modules
 server/*.log
+
+# 开机自启运行器的输出目录（Windows 任务计划把 stdout/stderr 落在这里）。
+# 内容是运行时日志，不是源码；而且会无限增长（脚本自带 5MB 滚动）。
+server/logs/

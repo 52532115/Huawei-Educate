@@ -1,0 +1,60 @@
+# nginx 反代示例（如果你已有 nginx，而不是用 compose 里的 Caddy）。
+#
+# 这不是可用的最终配置，是一份「抄哪几行」的模板：把 server_name、证书路径换成自己的。
+# 证书用 certbot 签发：
+#   sudo certbot --nginx -d api.example.com
+#
+# ⚠ 三行 SSE 配置是**必须**的。少了 proxy_buffering off，App 侧的流式输出会退化成
+#   「转圈很久，然后整段答案一次性蹦出来」——功能看着没坏，体验全毁，而且很难查。
+
+# HTTP 一律跳 HTTPS。客户端拼的是 https://，明文应直接不存在。
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name api.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # 与后端 MAX_BODY_BYTES（1 MiB）对齐。后端自己也会拒，这里拒更早而已。
+    client_max_body_size 1m;
+
+    # 少暴露一点指纹。
+    server_tokens off;
+
+    location / {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_http_version 1.1;
+
+        # ---- SSE 必需的三行 ----
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_set_header X-Accel-Buffering no;
+        # -----------------------
+
+        # 生成一个较长回答可能超过默认的 60s，给足时间。
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_connect_timeout 10s;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 注意（重要）：后端**不读**上面的 X-Forwarded-For——它按 socket 地址限流，
+        # 因为那个头任何客户端都能伪造。所以走 nginx 之后，限流会变成全局一份
+        # （默认 120/分钟），而不是每个 App 一份。
+        # 演示/答辩规模够用；要真按人限流，就在 nginx 侧加 limit_req，或给后端加
+        # 一个显式的「信任几跳反代」开关（目前刻意没做）。
+    }
+}

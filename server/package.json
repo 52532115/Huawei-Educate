@@ -9,6 +9,11 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "check-upstream": "node scripts/check-upstream.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "gen-token": "node scripts/gen-token.mjs",
+    "verify-guards": "node scripts/verify-guards.mjs",
+    "verify-startup": "node scripts/verify-startup.mjs"
   }
 }

@@ -1,0 +1,18 @@
+# 密钥绝不进镜像层。即便有人误把 .env 提交了，这一行保证它也进不了构建上下文。
+.env
+.env.*
+!.env.example
+
+# 测试与夹具只在开发机跑；服务端逻辑不依赖它们。
+test
+testlib
+*.log
+
+# 理论上不存在（零依赖），但万一有人手滑装了包，别把它塞进镜像。
+node_modules
+
+# 构建自身不需要的东西。
+Dockerfile
+.dockerignore
+docker-compose.yml
+deploy

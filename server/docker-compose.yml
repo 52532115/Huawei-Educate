@@ -1,0 +1,95 @@
+# 部署编排。两种用法：
+#
+#   1) 只起后端（前面已有自己的反代 / 或只在本机验证）
+#        docker compose up -d
+#
+#   2) 连 Caddy 一起起，让 Caddy 自动申请并续期 TLS 证书
+#        docker compose --profile tls up -d
+#
+# 前置：cp .env.example .env 并填好 APP_TOKEN / CHAT_API_KEY / EMBEDDING_API_KEY。
+# .env 缺失时 compose 会直接报错——这是好事，比起了个没密钥的实例强。
+
+services:
+  api:
+    build: .
+    image: safeta-ai-backend:1.0.0
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 容器内固定 8787；要改对外端口改下面的 ports 左侧。
+      PORT: "8787"
+
+    # 只绑回环。对外必须由反代转发——这样一个「能用你模型额度的代理」
+    # 不会因为忘记配防火墙而直接裸露在公网上。
+    # 反代若也在 compose 里，走服务名 api:8787，不需要这条映射。
+    ports:
+      - "127.0.0.1:8787:8787"
+
+    # 进程不需要写任何文件，所以让整个根文件系统只读。
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    # 去掉全部 Linux capability，并禁止提权。node 监听 8787（非特权端口）不需要任何 capability。
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    # 让容器里有 PID 1 来回收僵尸进程并正确转发信号（配合 index.js 的优雅关闭）。
+    init: true
+
+    # 给在途的流式回答留出收尾时间。
+    stop_grace_period: 20s
+
+    # 审计日志是一行一请求，不加轮转迟早撑爆磁盘。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    healthcheck:
+      # 与 Dockerfile 里的 HEALTHCHECK 一致，这里显式写出来是为了让它出现在 compose 的
+      # `docker compose ps` 里（镜像自带的探活 compose 不展示状态）。
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+  # 可选：自动 HTTPS。启用前把 API_DOMAIN 指向这台机器的公网 IP，并把 ACME_EMAIL 填上。
+  # 用 `--profile tls` 才会启动。
+  caddy:
+    image: caddy:2-alpine
+    profiles:
+      - tls
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # 证书与 ACME 账户状态，必须持久化，否则每次重建都重新申请（会撞 Let's Encrypt 频率限制）。
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  caddy_data:
+  caddy_config:

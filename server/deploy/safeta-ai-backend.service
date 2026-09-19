@@ -1,0 +1,76 @@
+# systemd 单元（不走 Docker 时用这份）。
+#
+# 安装步骤：
+#   1. 用户与目录
+#        sudo useradd --system --no-create-home --shell /usr/sbin/nologin safeta
+#        sudo mkdir -p /opt/safeta-ai-backend
+#        sudo cp -r src scripts package.json /opt/safeta-ai-backend/
+#        sudo chown -R root:root /opt/safeta-ai-backend
+#   2. 环境变量文件（放密钥的地方，权限必须是 600 且属主 root）
+#      —— systemd 以 root 身份在降权**之前**读取它，所以 User=safeta 依然拿得到值。
+#        sudo cp server/.env.example /etc/safeta-ai-backend.env
+#        sudo chown root:root /etc/safeta-ai-backend.env
+#        sudo chmod 600 /etc/safeta-ai-backend.env
+#        sudo -e /etc/safeta-ai-backend.env      # 填 APP_TOKEN / CHAT_API_KEY / EMBEDDING_API_KEY
+#   3. 启用
+#        sudo cp server/deploy/safeta-ai-backend.service /etc/systemd/system/
+#        sudo systemctl daemon-reload
+#        sudo systemctl enable --now safeta-ai-backend
+#        systemctl status safeta-ai-backend
+#        journalctl -u safeta-ai-backend -f
+#   4. 自检
+#        node scripts/smoke.mjs --base https://<你的域名> --token <APP_TOKEN>
+#
+# 确认 node 路径：`which node`。若不在 /usr/bin/node，改下面的 ExecStart。
+
+[Unit]
+Description=SafeTAcademy AI 后端（聊天 + 嵌入代理，持有厂商密钥）
+Documentation=https://github.com/52532115/Huawei-Educate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=safeta
+Group=safeta
+WorkingDirectory=/opt/safeta-ai-backend
+EnvironmentFile=/etc/safeta-ai-backend.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node src/index.js
+
+Restart=on-failure
+RestartSec=2s
+# SIGTERM 后给在途的流式回答留出收尾时间（index.js 会优雅关闭）。
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+
+# ---- 加固：这个进程只需要读代码、监听端口、向外发 HTTPS ----
+NoNewPrivileges=true
+# 整个文件系统只读，/tmp 与 /var 除外。服务不写任何文件。
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+# 监听 8787（非特权端口）+ 出站 HTTPS，一个 capability 都不需要。
+CapabilityBoundingSet=
+AmbientCapabilities=
+# 只允许这两类地址族，避免 AF_NETLINK / AF_PACKET 之类。
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
