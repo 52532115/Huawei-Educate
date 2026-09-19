@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 
 import {
   DEFAULT_CHAT_MODEL,
+  DEFAULT_CHAT_THINKING,
   DEFAULT_EMBEDDING_BATCH_SIZE,
   DEFAULT_EMBEDDING_MODEL,
   DEFAULT_PORT,
@@ -20,6 +21,7 @@ import {
   ServerConfig,
   loadConfig,
   normalizeBaseUrl,
+  readTriState,
 } from '../src/config.js';
 import { RateLimiter, extractToken, tokenMatches } from '../src/guard.js';
 import {
@@ -38,6 +40,7 @@ function baseConfig(overrides = {}) {
     chatBaseUrl: 'https://chat.example/v1',
     chatApiKey: '',
     chatModel: DEFAULT_CHAT_MODEL,
+    chatThinking: DEFAULT_CHAT_THINKING,
     embeddingBaseUrl: 'https://embed.example/v1',
     embeddingApiKey: '',
     embeddingModel: DEFAULT_EMBEDDING_MODEL,
@@ -117,6 +120,7 @@ describe('config', () => {
     assert.equal(described.ok, true);
     assert.equal(described.authRequired, true);
     assert.equal(described.chat.configured, true);
+    assert.equal(described.chat.thinking, 'default');
     assert.equal(described.embedding.configured, true);
     assert.equal(described.embedding.dimension, 1024);
 
@@ -126,6 +130,49 @@ describe('config', () => {
     assert.equal(serialized.includes('sk-embed-secret'), false);
     assert.equal(serialized.includes('chat.example'), false);
     assert.equal(serialized.includes('embed.example'), false);
+  });
+});
+
+describe('config.chatThinking', () => {
+  it('sends nothing by default, so vendors that do not know the field still work', () => {
+    assert.equal(DEFAULT_CHAT_THINKING, 'default');
+    const config = loadConfig({});
+    assert.equal(config.chatThinking, DEFAULT_CHAT_THINKING);
+    assert.equal(config.chatThinkingParam(), null);
+  });
+
+  it('understands the usual spellings of a boolean', () => {
+    for (const raw of ['true', 'TRUE', 'On', 'yes', '1']) {
+      assert.equal(readTriState({ X: raw }, 'X'), 'on', raw);
+    }
+    for (const raw of ['false', 'FALSE', 'off', 'No', '0']) {
+      assert.equal(readTriState({ X: raw }, 'X'), 'off', raw);
+    }
+    assert.equal(readTriState({}, 'X'), 'default');
+    assert.equal(readTriState({ X: '   ' }, 'X'), 'default');
+  });
+
+  it('maps to the exact upstream value the operator asked for', () => {
+    assert.equal(loadConfig({ CHAT_ENABLE_THINKING: 'false' }).chatThinkingParam(), false);
+    assert.equal(loadConfig({ CHAT_ENABLE_THINKING: 'true' }).chatThinkingParam(), true);
+  });
+
+  it('reports a misspelling instead of silently treating it as "off"', () => {
+    // A typo must not masquerade as a deliberate choice: thinking would stay
+    // on (the Qwen default) while the operator believes it is off.
+    const typo = loadConfig({ CHAT_ENABLE_THINKING: 'ture' });
+    assert.equal(typo.chatThinking, 'default');
+    assert.equal(typo.chatThinkingParam(), null);
+    assert.equal(typo.chatThinkingTypo(), 'ture');
+
+    assert.equal(loadConfig({}).chatThinkingTypo(), '');
+    assert.equal(loadConfig({ CHAT_ENABLE_THINKING: 'off' }).chatThinkingTypo(), '');
+  });
+
+  it('shows up in /health, so "is thinking actually off?" has an answer', () => {
+    assert.equal(loadConfig({}).describe().chat.thinking, 'default');
+    assert.equal(loadConfig({ CHAT_ENABLE_THINKING: 'off' }).describe().chat.thinking, 'off');
+    assert.equal(loadConfig({ CHAT_ENABLE_THINKING: 'on' }).describe().chat.thinking, 'on');
   });
 });
 
@@ -386,6 +433,40 @@ describe('chat.buildUpstreamChatBody', () => {
     const body = buildUpstreamChatBody({ messages: [], evil: 'x', api_key: 'y' }, config);
     assert.equal(body.evil, undefined);
     assert.equal(body.api_key, undefined);
+  });
+
+  it('sends neither spelling when the operator has not chosen', () => {
+    // Silence is the only safe default: these are vendor dialects, not OpenAI
+    // fields, and a vendor that documents neither one must keep working.
+    const body = buildUpstreamChatBody({ messages: [] }, config);
+    assert.equal('enable_thinking' in body, false);
+    assert.equal('thinking' in body, false);
+  });
+
+  it('turns thinking off in both vendor dialects at once', () => {
+    // Each upstream picks up the spelling it knows and silently ignores the
+    // other, so both go out and no vendor table is needed. Sending only
+    // `enable_thinking` *looks* like it works and is a no-op on DeepSeek —
+    // guarding against that silent failure is the whole point here.
+    const off = buildUpstreamChatBody({ messages: [] }, baseConfig({ chatThinking: 'off' }));
+    assert.equal(off.enable_thinking, false);
+    assert.equal(off.thinking.type, 'disabled');
+
+    const on = buildUpstreamChatBody({ messages: [] }, baseConfig({ chatThinking: 'on' }));
+    assert.equal(on.enable_thinking, true);
+    assert.equal(on.thinking.type, 'enabled');
+  });
+
+  it('refuses to let the client pick the thinking mode', () => {
+    // The app is not the operator. A client-supplied value (from an older or
+    // tampered build) must not override the server's decision — including the
+    // DeepSeek spelling, which is not in FORWARDED_FIELDS either.
+    const body = buildUpstreamChatBody(
+      { messages: [], enable_thinking: true, thinking: { type: 'enabled' } },
+      baseConfig({ chatThinking: 'off' }),
+    );
+    assert.equal(body.enable_thinking, false);
+    assert.equal(body.thinking.type, 'disabled');
   });
 });
 

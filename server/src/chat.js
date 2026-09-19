@@ -87,6 +87,20 @@ export function buildUpstreamChatBody(body, config) {
       upstreamBody[field] = body[field];
     }
   }
+  // The thinking switch is set by the SERVER, never forwarded from the client.
+  // Two reasons, both deliberate: the field names are vendor dialects rather
+  // than OpenAI ones (letting the app send them would make our wire format a
+  // vendor dialect), and turning thinking on or off changes what a request
+  // costs — the same class of decision as `model`, which is overwritten above
+  // for the same reason.
+  //
+  // An empty object means "send nothing at all". Both spellings are written
+  // *after* the whitelist loop and are absent from FORWARDED_FIELDS, so a
+  // client that sends them anyway cannot win: the server's value lands last.
+  const thinkingFields = config.chatThinkingFields ? config.chatThinkingFields() : {};
+  for (const field of Object.keys(thinkingFields)) {
+    upstreamBody[field] = thinkingFields[field];
+  }
   return upstreamBody;
 }
 

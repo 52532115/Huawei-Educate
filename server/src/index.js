@@ -30,6 +30,15 @@ if (!config.embeddingConfigured()) {
   });
 }
 
+const thinkingTypo = config.chatThinkingTypo();
+if (thinkingTypo.length > 0) {
+  logger.warn('CHAT_ENABLE_THINKING was written but not understood; ignoring it', {
+    value: thinkingTypo,
+    hint: '可写 true/false/on/off/yes/no/1/0。当前按「不发送该参数」处理，即由模型自己的默认值决定——'
+      + 'Qwen3.5 及以后默认开启思考，回复会变慢且按输出价计费。',
+  });
+}
+
 app.server.on('error', (error) => {
   logger.error('server failed', { code: error && error.code, detail: error && error.message });
   process.exitCode = 1;
@@ -42,6 +51,8 @@ app.server.listen(config.port, () => {
     port,
     authRequired: config.authRequired(),
     chat: config.chatConfigured(),
+    chatModel: config.chatModel,
+    chatThinking: config.chatThinking,
     embedding: config.embeddingConfigured(),
     embeddingModel: config.embeddingModel,
     embeddingBatchSize: config.embeddingBatchSize,

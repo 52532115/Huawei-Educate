@@ -427,6 +427,55 @@ describe('POST /chat/completions', () => {
   });
 });
 
+describe('chat thinking switch', () => {
+  const findChat = (upstream) => upstream.state.requests
+    .find((request) => request.path.indexOf('/chat/completions') >= 0);
+
+  it('passes the operator choice all the way to the wire', async () => {
+    // Unit tests cover buildUpstreamChatBody; only this proves the value
+    // survives the relay and lands in the request the vendor actually sees.
+    await withStack({ chatThinking: 'off' }, async ({ origin, upstream }) => {
+      const response = await post(origin, '/chat/completions', {
+        body: { messages: [{ role: 'user', content: 'hi' }] },
+      });
+      assert.equal(response.status, 200);
+      const chatRequest = findChat(upstream);
+      assert.ok(chatRequest, '上游应当被调用');
+      assert.equal(chatRequest.body.enable_thinking, false);
+      assert.equal(chatRequest.body.thinking.type, 'disabled');
+    });
+  });
+
+  it('stays silent when the operator did not choose, so other vendors still work', async () => {
+    await withStack({}, async ({ origin, upstream }) => {
+      const response = await post(origin, '/chat/completions', {
+        body: { messages: [{ role: 'user', content: 'hi' }] },
+      });
+      assert.equal(response.status, 200);
+      const chatRequest = findChat(upstream);
+      assert.ok(chatRequest, '上游应当被调用');
+      assert.equal('enable_thinking' in chatRequest.body, false);
+      assert.equal('thinking' in chatRequest.body, false);
+    });
+  });
+
+  it('does not let the client turn thinking on behind the operator back', async () => {
+    await withStack({ chatThinking: 'off' }, async ({ origin, upstream }) => {
+      const response = await post(origin, '/chat/completions', {
+        body: {
+          messages: [{ role: 'user', content: 'hi' }],
+          enable_thinking: true,
+          thinking: { type: 'enabled' },
+        },
+      });
+      assert.equal(response.status, 200);
+      const chatRequest = findChat(upstream);
+      assert.equal(chatRequest.body.enable_thinking, false);
+      assert.equal(chatRequest.body.thinking.type, 'disabled');
+    });
+  });
+});
+
 describe('routing', () => {
   it('answers 404 on an unknown path', async () => {
     await withStack({}, async ({ origin }) => {
