@@ -36,6 +36,21 @@ const ROOT = path.resolve(__dirname, '..');
 // 一并挡住它 —— 里面是真实嵌入向量，是产物不是源码，不入库。
 const SNAPSHOT_CACHE = path.join(__dirname, '_e2e_dense.cache.json');
 
+// 整段输出同时落一份日志（`_test_artifacts/*.log` 已被忽略）。留证用：这次跑的证据
+// 应该是机器写下来的，而不是从终端里手工抄走的——抄一遍就多一次抄错的机会。
+const LOG_PATH = path.join(__dirname, '_e2e_dense_run.log');
+const capturedLines = [];
+const rawConsoleLog = console.log.bind(console);
+console.log = (...args) => {
+  capturedLines.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+  rawConsoleLog(...args);
+};
+process.on('exit', () => {
+  try {
+    fs.writeFileSync(LOG_PATH, capturedLines.join('\n') + '\n');
+  } catch (e) { /* 留证失败不该改退出码 */ }
+});
+
 function loadTypeScript() {
   const vendored = 'D:/devecostudio-windows-6.0.2.650/DevEco Studio/tools/hvigor/hvigor/node_modules/typescript';
   if (fs.existsSync(vendored)) {
