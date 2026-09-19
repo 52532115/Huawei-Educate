@@ -264,17 +264,17 @@ const aiMod = loadArkTs(
   check('后端', '直连模式未配 Key 仍报原友好错误（行为不变）',
     stillMissing.indexOf('尚未配置 API Key') >= 0, stillMissing, 'friendly hint');
 
-  // --- the default constructor path reads the setting from AppStorage ---
+  // --- the default constructor path reads the live setting ---
   global.AppStorage.data.set('aiBackendUrl', 'https://from-appstorage.example/');
   global.AppStorage.data.set('aiBackendToken', 'tok-from-appstorage');
-  const fromStorage = AiBackend.fromAppStorage();
+  const fromStorage = AiBackend.current();
   const defaultConstructed = new aiMod.AiService(5000, 10);
-  check('后端', 'fromAppStorage 读到地址与令牌，AiService 默认构造即采用它',
+  check('后端', 'current 读到地址与令牌，AiService 默认构造即采用它',
     fromStorage.getBaseUrl() === 'https://from-appstorage.example' &&
     fromStorage.getToken() === 'tok-from-appstorage' &&
     defaultConstructed.getMode() === 'backend',
     { url: fromStorage.getBaseUrl(), mode: defaultConstructed.getMode() },
-    'read from AppStorage and used by default');
+    'read from storage and used by default');
   global.AppStorage.data.delete('aiBackendUrl');
   global.AppStorage.data.delete('aiBackendToken');
 
@@ -413,6 +413,29 @@ const aiMod = loadArkTs(
     afterRestart.getBaseUrl() === 'https://ai.example.edu' && afterRestart.getToken() === 'tok-1',
     { url: afterRestart.getBaseUrl(), token: afterRestart.getToken() }, 'restored from file');
 
+  // 上面那条断言证明的是「零件好用」，不是「接线正确」——而真实故障恰好落在
+  // 两者之间：App 走的是 AiBackend.current()，它当年只读 AppStorage（内存态），
+  // 于是每次重启都静默退回直连模式，而写好的配置文件从来没被读回来。
+  // 所以这里断言的是 App 真正调用的那个入口，并且连「回写 AppStorage」一起验，
+  // 因为设置面板的回填也读它——只恢复一半的话，配置生效但输入框是空的。
+  global.AppStorage.data.clear(); // restart once more: memory gone, file remains
+  global.AppStorage.data.set('filesDir', '/tmp/p4test');
+  const liveAfterRestart = AiBackend.current();
+  check('后端设置', '重启后 current()（App 唯一入口）从文件恢复，不退回直连模式',
+    liveAfterRestart.getBaseUrl() === 'https://ai.example.edu' &&
+    liveAfterRestart.getToken() === 'tok-1' &&
+    liveAfterRestart.mode() === 'backend',
+    { url: liveAfterRestart.getBaseUrl(), mode: liveAfterRestart.mode() },
+    'restored + backend mode');
+
+  global.AppStorage.data.clear();
+  global.AppStorage.data.set('filesDir', '/tmp/p4test');
+  AiBackend.current();
+  check('后端设置', '恢复后回写 AppStorage：设置面板回填靠它，否则配置生效但输入框是空的',
+    global.AppStorage.data.get('aiBackendUrl') === 'https://ai.example.edu' &&
+    global.AppStorage.data.get('aiBackendToken') === 'tok-1',
+    { url: global.AppStorage.data.get('aiBackendUrl') }, 'republished to memory');
+
   check('后端设置', 'parse：只有一行时令牌为空、地址完整',
     (() => {
       const only = new AiBackendStore().parse('https://a.example');
@@ -425,6 +448,152 @@ const aiMod = loadArkTs(
   new AiBackendStore().clear();
   check('后端设置', 'clear 后回到未配置且不抛异常',
     new AiBackendStore().isConfigured() === false, new AiBackendStore().isConfigured(), false);
+
+  // ---------- Part 6: 设置面板的「测试连接」判定 ----------
+  // 判定逻辑刻意与 HTTP 分开，所以每种真机上会遇到的情况都能在这里造出来。
+  // 加这个功能的原因是：面板原先没有任何反馈，唯一知道配置对不对的办法是
+  // 发一条消息看报错，而那句报错把「地址错 / 令牌错 / 后端挂了」混成一句。
+  const probe = global.__aiBackendModule.describeBackendProbe;
+  const NOT_RUN = global.__aiBackendModule.PROBE_TOKEN_NOT_RUN;
+  const NOT_CONFIGURED = global.__aiBackendModule.PROBE_NOT_CONFIGURED;
+
+  const healthOf = (authRequired, chatOk, embedOk) => JSON.stringify({
+    ok: true,
+    authRequired: authRequired,
+    chat: { configured: chatOk, model: 'deepseek-flash' },
+    embedding: { configured: embedOk, model: 'text-embedding-v3', dimension: 1024, batchSize: 10 },
+    rateLimitPerMinute: 120,
+  });
+
+  check('连接测试', 'healthUrl 拼在 Base URL 之后',
+    withBackend.healthUrl() === 'https://ai.example.edu/health', withBackend.healthUrl(),
+    'https://ai.example.edu/health');
+
+  check('连接测试', 'PROBE_TOKEN_NOT_RUN 是 -1（未探测的哨兵）', NOT_RUN === -1, NOT_RUN, -1);
+
+  check('连接测试', '未配置后端时直说当前是直连模式',
+    (() => {
+      const r = probe(NOT_CONFIGURED, '', NOT_RUN);
+      return r.ok === false && r.title.indexOf('直连') >= 0 && r.detail.indexOf('API Key') >= 0;
+    })(), probe(NOT_CONFIGURED, '', NOT_RUN).title, '含「直连」');
+
+  check('连接测试', 'PROBE_NOT_CONFIGURED 与 transport 失败（0）是两个不同分支',
+    probe(NOT_CONFIGURED, '', NOT_RUN).title !== probe(0, '', NOT_RUN).title,
+    probe(NOT_CONFIGURED, '', NOT_RUN).title, '≠ ' + probe(0, '', NOT_RUN).title);
+
+  // 这条 detail 里必须有「地址会变」那一条：局域网 IP 随 DHCP 变，App 里存的是上次
+  // 填的那串，肉眼看起来"配置好好的却连不上" —— 实测踩过（10.134.41.230 → .72）。
+  // 这是唯一能让人自己定位到这层的信息，丢了它排查会绕远路。
+  check('连接测试', 'transport 失败（status 0）判「连不上」，且提示地址可能已过期',
+    (() => {
+      const r = probe(0, '', NOT_RUN);
+      return r.ok === false && r.title.indexOf('连不上') >= 0 && r.detail.indexOf('manage-autostart') >= 0;
+    })(), probe(0, '', NOT_RUN).detail.slice(-40), '含「连不上」+ 当前地址怎么看');
+
+  check('连接测试', '200 且 ok=true 判通过，并报出鉴权与两项能力',
+    (() => {
+      const r = probe(200, healthOf(true, true, false), 400);
+      return r.ok === true &&
+        r.detail.indexOf('鉴权已开启') >= 0 &&
+        r.detail.indexOf('聊天已配置') >= 0 &&
+        r.detail.indexOf('嵌入未配置') >= 0 &&
+        r.detail.indexOf('令牌已接受') >= 0;
+    })(), probe(200, healthOf(true, true, false), 400).detail,
+    '鉴权已开启 · 聊天已配置 · 嵌入未配置 · 令牌已接受');
+
+  check('连接测试', '鉴权关闭时不需要令牌，仍判通过',
+    (() => {
+      const r = probe(200, healthOf(false, true, true), NOT_RUN);
+      return r.ok === true && r.detail.indexOf('鉴权已关闭') >= 0;
+    })(), probe(200, healthOf(false, true, true), NOT_RUN).detail, '鉴权已关闭 · …');
+
+  check('连接测试', '200 但不是本服务的应答（例如把域名填成别的服务）',
+    (() => {
+      const r = probe(200, '<html>登录门户</html>', NOT_RUN);
+      return r.ok === false && r.title.indexOf('地址可能填错') >= 0;
+    })(), probe(200, '<html></html>', NOT_RUN).title, '含「地址可能填错」');
+
+  check('连接测试', '200 但 ok 不为 true 也判地址可疑',
+    (() => {
+      const r = probe(200, JSON.stringify({ status: 'ok' }), NOT_RUN);
+      return r.ok === false && r.title.indexOf('地址可能填错') >= 0;
+    })(), probe(200, JSON.stringify({ status: 'ok' }), NOT_RUN).title, '含「地址可能填错」');
+
+  check('连接测试', '令牌被拒（tokenStatus 401）时判失败并指向令牌',
+    (() => {
+      const r = probe(200, healthOf(true, true, true), 401);
+      return r.ok === false && r.title === '令牌被拒' && r.detail.indexOf('APP_TOKEN') >= 0;
+    })(), probe(200, healthOf(true, true, true), 401).title, '令牌被拒');
+
+  check('连接测试', '403 同样按令牌被拒处理',
+    probe(200, healthOf(true, true, true), 403).title === '令牌被拒',
+    probe(200, healthOf(true, true, true), 403).title, '令牌被拒');
+
+  check('连接测试', '后端要鉴权却没填令牌 → 判「缺少令牌」而不是放过',
+    (() => {
+      const r = probe(200, healthOf(true, true, true), NOT_RUN);
+      return r.ok === false && r.title === '缺少令牌';
+    })(), probe(200, healthOf(true, true, true), NOT_RUN).title, '缺少令牌');
+
+  check('连接测试', '令牌探测拿到 400（过了鉴权但请求不合法）→ 视为令牌已接受',
+    (() => {
+      const r = probe(200, healthOf(true, true, true), 400);
+      return r.ok === true && r.detail.indexOf('令牌已接受') >= 0;
+    })(), probe(200, healthOf(true, true, true), 400).detail, '含「令牌已接受」');
+
+  check('连接测试', '令牌探测拿到 503（厂商没配）也算令牌被接受',
+    probe(200, healthOf(true, true, true), 503).ok === true,
+    probe(200, healthOf(true, true, true), 503).ok, true);
+
+  check('连接测试', '令牌探测自己没拿到应答（0）→ 只标未知，不判失败',
+    (() => {
+      const r = probe(200, healthOf(true, true, true), 0);
+      return r.ok === true && r.detail.indexOf('令牌状态未知') >= 0;
+    })(), probe(200, healthOf(true, true, true), 0).detail, '含「令牌状态未知」');
+
+  check('连接测试', '404 判「路径不对」并提示别带接口路径',
+    (() => {
+      const r = probe(404, '', NOT_RUN);
+      return r.ok === false && r.title === '路径不对' && r.detail.indexOf('/embed') >= 0;
+    })(), probe(404, '', NOT_RUN).title, '路径不对');
+
+  check('连接测试', '5xx 判「后端出错」并提示看日志',
+    (() => {
+      const r = probe(502, '', NOT_RUN);
+      return r.ok === false && r.title.indexOf('后端出错') >= 0;
+    })(), probe(502, '', NOT_RUN).title, '含「后端出错」');
+
+  check('连接测试', '未预期状态码（如门户页 302）有兜底文案',
+    (() => {
+      const r = probe(302, '', NOT_RUN);
+      return r.ok === false && r.title.indexOf('未预期的应答') >= 0;
+    })(), probe(302, '', NOT_RUN).title, '含「未预期的应答」');
+
+  check('连接测试', 'health 里缺能力字段时不抛异常，标为状态未知',
+    (() => {
+      const r = probe(200, JSON.stringify({ ok: true, authRequired: false }), NOT_RUN);
+      return r.ok === true && r.detail.indexOf('状态未知') >= 0;
+    })(), probe(200, JSON.stringify({ ok: true, authRequired: false }), NOT_RUN).detail,
+    '含「状态未知」');
+
+  check('连接测试', '空响应体不抛异常',
+    (() => {
+      const r = probe(200, '', NOT_RUN);
+      return r.ok === false;
+    })(), probe(200, '', NOT_RUN).ok, false);
+
+  check('连接测试', '判定结果永远带一句可读的标题与说明',
+    (() => {
+      const cases = [[0, ''], [200, healthOf(true, true, true)], [401, ''], [404, ''],
+        [500, ''], [302, '']];
+      for (const pair of cases) {
+        const r = probe(pair[0], pair[1], NOT_RUN);
+        if (r.title.length === 0 || r.detail.length === 0) {
+          return false;
+        }
+      }
+      return true;
+    })(), 'all have title+detail', true);
 
   report();
 })();

@@ -24,6 +24,7 @@ import {
 } from './ChatModels';
 import { KnowledgeHit } from './KnowledgeModels';
 import { AiService, ApiKeyMissingError, ApiHttpError } from '../service/AiService';
+import { AiBackend, BackendProbeResult } from '../service/AiBackend';
 import { AgentService, AgentLimitError, AgentTimeoutError } from '../service/AgentService';
 import { SessionStore } from '../service/SessionStore';
 import { DataCollectService } from '../service/DataCollectService';
@@ -91,6 +92,18 @@ export class ChatViewModel {
 
   setStateChangeCallback(cb: () => void): void {
     this.onStateChange = cb;
+  }
+
+  /**
+   * Probes a backend configuration.
+   *
+   * Takes the values explicitly so the settings sheet can verify what the user
+   * has just typed — before saving. Probing the stored config instead would
+   * report success for values that were never applied, which is the exact
+   * confusion this feature exists to remove.
+   */
+  async probeBackend(backend: AiBackend): Promise<BackendProbeResult> {
+    return await this.aiService.probeBackend(backend);
   }
 
   private notifyChange(): void {

@@ -17,7 +17,7 @@ import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { AiConstants } from '../utils/AiConstants';
 import { ApiKeyStore } from './ApiKeyStore';
-import { AiBackend } from './AiBackend';
+import { AiBackend, BackendProbeResult, describeBackendProbe, PROBE_NOT_CONFIGURED, PROBE_TOKEN_NOT_RUN } from './AiBackend';
 import { AiMessage, AiApiRequest, AiToolCall, AiResponseResult, ApiToolSchema } from '../viewmodel/ChatModels';
 import { Logger } from '@safe/basic';
 
@@ -26,6 +26,12 @@ const RESPONSE_CODE_OK = 200;
 const STREAM_EVENT_TIMEOUT_MS = 15000;
 /** Base backoff between retry attempts (attempt * base ms). */
 const RETRY_BASE_DELAY_MS = 600;
+/**
+ * Timeout for the settings-sheet probe. Much shorter than a chat request: the
+ * whole point is to answer "is this reachable" quickly, not to wait as long as
+ * a real answer might take.
+ */
+const PROBE_TIMEOUT_MS = 8000;
 
 /** Thrown when no API key has been configured at runtime; message is user-facing. */
 export class ApiKeyMissingError extends Error {
@@ -160,7 +166,7 @@ export class AiService {
     if (this.injectedBackend !== null) {
       return this.injectedBackend;
     }
-    return AiBackend.fromAppStorage();
+    return AiBackend.current();
   }
 
   /**
@@ -512,6 +518,98 @@ export class AiService {
   /** Returns true if a request is currently in flight. */
   isBusy(): boolean {
     return this.httpRequest !== null;
+  }
+
+  /**
+   * Probes the configured backend so the settings sheet can say whether the
+   * address and the token actually work, instead of making the user send a
+   * message and read the failure.
+   *
+   * Two steps, because neither one answers both questions:
+   *
+   * 1. `GET /health` is unauthenticated, so it proves the address is right and
+   *    reports what the server has configured — but says nothing about the token.
+   * 2. A deliberately invalid `POST` to the chat path then separates "token
+   *    rejected" (401) from "token accepted, body rejected". The server checks
+   *    auth before it validates the body, so this costs nothing: no model call
+   *    is made just to find out whether a token works.
+   *
+   * The probe deliberately does **not** touch `this.httpRequest` — it is not a
+   * chat request, so it must not make the UI think something is in flight, and
+   * ⏹ must not be able to cancel it.
+   */
+  async probeBackend(target: AiBackend | null = null): Promise<BackendProbeResult> {
+    // `target` lets the settings sheet probe what the user has just typed,
+    // before it is saved. Without it the probe would test the previous
+    // configuration and report success for values that were never applied.
+    const backend = target !== null ? target : this.currentBackend();
+    if (!backend.isConfigured()) {
+      // The wording lives in the pure verdict function along with every other
+      // branch, so it is covered by the same offline tests.
+      return describeBackendProbe(PROBE_NOT_CONFIGURED, '', PROBE_TOKEN_NOT_RUN);
+    }
+
+    let statusCode = 0;
+    let bodyText = '';
+    try {
+      const request = http.createHttp();
+      const response = await request.request(backend.healthUrl(), {
+        method: http.RequestMethod.GET,
+        header: this.probeHeaders(backend),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: PROBE_TIMEOUT_MS,
+        readTimeout: PROBE_TIMEOUT_MS,
+      });
+      request.destroy();
+      statusCode = response.responseCode;
+      bodyText = typeof response.result === 'string' ? response.result : '';
+    } catch (e) {
+      // Transport failure is the common case — wrong host, nothing listening,
+      // TLS refused. describeBackendProbe reads 0 as exactly that.
+      statusCode = 0;
+    }
+
+    let tokenStatusCode = PROBE_TOKEN_NOT_RUN;
+    if (statusCode === RESPONSE_CODE_OK && backend.hasToken()) {
+      tokenStatusCode = await this.probeToken(backend);
+    }
+    return describeBackendProbe(statusCode, bodyText, tokenStatusCode);
+  }
+
+  /**
+   * Headers for a probe, built here rather than through `buildHeaders()`.
+   * That path falls back to the user's vendor key, and a probe must never be
+   * able to carry a vendor credential anywhere.
+   */
+  private probeHeaders(backend: AiBackend): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = backend.getToken();
+    if (token.length > 0) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  }
+
+  /** Returns the status code, or 0 when the request never got an answer. */
+  private async probeToken(backend: AiBackend): Promise<number> {
+    try {
+      const request = http.createHttp();
+      const response = await request.request(backend.chatUrl(), {
+        method: http.RequestMethod.POST,
+        header: this.probeHeaders(backend),
+        // An empty body on purpose: the server checks auth before it validates
+        // the body, so 401 vs anything-else answers "is this token accepted"
+        // without ever reaching the model.
+        extraData: '{}',
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: PROBE_TIMEOUT_MS,
+        readTimeout: PROBE_TIMEOUT_MS,
+      });
+      request.destroy();
+      return response.responseCode;
+    } catch (e) {
+      return 0;
+    }
   }
 
   /** Stream request body — the SSE path always sends stream=true. */

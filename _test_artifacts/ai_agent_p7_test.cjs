@@ -2102,8 +2102,8 @@ async function runEmbeddingProxyChecks() {
     })(), 'all null', 'all null');
 
   check('L 代理', '配置来源复用 AiBackend（同一份后端配置），代理自己不另设一份 URL 键',
-    typeof KnowledgeEmbeddingProxy.fromAppStorage === 'function' &&
-    KnowledgeEmbeddingProxy.fromAppStorage().isConfigured() === false &&
+    typeof KnowledgeEmbeddingProxy.current === 'function' &&
+    KnowledgeEmbeddingProxy.current().isConfigured() === false &&
     proxySrc.indexOf('AiBackend') >= 0 &&
     proxySrc.indexOf('BACKEND_URL_KEY') < 0,
     'delegates', 'delegates');

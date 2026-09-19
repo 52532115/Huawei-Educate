@@ -46,6 +46,10 @@ export struct AiChatView {
   @State backendUrlInput: string = '';
   @State backendTokenInput: string = '';
   @State usingBackend: boolean = false;
+  @State probing: boolean = false;
+  @State probeOk: boolean = false;
+  @State probeTitle: string = '';
+  @State probeDetail: string = '';
   private chatVM: ChatViewModel = new ChatViewModel();
   private analysisVM: AnalysisViewModel = new AnalysisViewModel();
   scroller: Scroller = new Scroller();
@@ -124,12 +128,15 @@ export struct AiChatView {
             .fontSize(16)
             .backgroundColor(Color.Transparent)
             .onClick(() => {
-              const backend = AiBackend.fromAppStorage();
+              const backend = AiBackend.current();
               this.backendUrlInput = backend.getBaseUrl();
               this.backendTokenInput = backend.getToken();
               this.usingBackend = backend.isConfigured();
               this.apiKeyInput = new ApiKeyStore().getKey();
               this.apiKeyConfigured = this.apiKeyInput.length > 0;
+              // Start each visit with no verdict: the previous one described a
+              // different moment, and stale reassurance is worse than none.
+              this.clearProbe();
               this.showSettingsSheet = true;
             });
 
@@ -349,6 +356,21 @@ export struct AiChatView {
     return this.backendUrlInput.trim().length > 0 || this.apiKeyInput.trim().length > 0;
   }
 
+  /** Probing needs a backend address, and only one run at a time. */
+  private canProbe(): boolean {
+    return !this.probing && this.backendUrlInput.trim().length > 0;
+  }
+
+  /**
+   * Drops a stale verdict. Once the address or token changes, the previous
+   * result describes values that are no longer on screen — leaving it up would
+   * read as "this is fine" for a configuration that was never tested.
+   */
+  private clearProbe(): void {
+    this.probeTitle = '';
+    this.probeDetail = '';
+  }
+
   private saveSettings(): void {
     const backend = new AiBackend(this.backendUrlInput, this.backendTokenInput);
     new AiBackendStore().save(backend);
@@ -372,6 +394,35 @@ export struct AiChatView {
       return '后端模式 ✓';
     }
     return this.apiKeyConfigured ? '直连模式 ✓' : '未配置';
+  }
+
+  /**
+   * Probes the values currently typed in the sheet — not the saved ones — so
+   * a typo can be caught before it is committed.
+   *
+   * Without this, the only feedback the sheet could give came from sending a
+   * real message and reading whatever error came back, which lumps "wrong
+   * address", "wrong token" and "the backend is down" into one sentence.
+   */
+  private async runProbe(): Promise<void> {
+    if (this.probing) {
+      return;
+    }
+    this.probing = true;
+    this.probeTitle = '';
+    this.probeDetail = '';
+    try {
+      const target = new AiBackend(this.backendUrlInput, this.backendTokenInput);
+      const result = await this.chatVM.probeBackend(target);
+      this.probeOk = result.ok;
+      this.probeTitle = result.title;
+      this.probeDetail = result.detail;
+    } catch (e) {
+      this.probeOk = false;
+      this.probeTitle = '测试失败';
+      this.probeDetail = '探测过程中出现异常，请确认网络可用后重试。';
+    }
+    this.probing = false;
   }
 
   @Builder
@@ -409,6 +460,7 @@ export struct AiChatView {
           .width('90%')
           .onChange((value: string) => {
             this.backendUrlInput = value;
+            this.clearProbe();
           });
 
         TextInput({ text: this.backendTokenInput, placeholder: '应用令牌（后端未启用鉴权可留空）' })
@@ -421,7 +473,40 @@ export struct AiChatView {
           .width('90%')
           .onChange((value: string) => {
             this.backendTokenInput = value;
+            this.clearProbe();
           });
+
+        // Tests what is typed above, not what was saved — otherwise a typo
+        // would only surface later, as a failed chat message.
+        Row({ space: 10 }) {
+          Button(this.probing ? '测试中…' : '测试连接')
+            .fontSize(13)
+            .fontColor(this.canProbe() ? '#1A56DB' : '#9CA3AF')
+            .height(34)
+            .padding({ left: 18, right: 18 })
+            .backgroundColor('#EFF6FF')
+            .borderRadius(17)
+            .enabled(this.canProbe())
+            .onClick(() => {
+              this.runProbe();
+            });
+
+          if (this.probeTitle.length > 0) {
+            Text(this.probeTitle)
+              .fontSize(12)
+              .fontColor(this.probeOk ? '#10B981' : '#DC2626');
+          }
+        }
+        .width('90%')
+        .justifyContent(FlexAlign.Start);
+
+        if (this.probeDetail.length > 0) {
+          Text(this.probeDetail)
+            .fontSize(12)
+            .fontColor('#6B7280')
+            .lineHeight(18)
+            .width('90%');
+        }
 
         Divider()
           .width('90%')

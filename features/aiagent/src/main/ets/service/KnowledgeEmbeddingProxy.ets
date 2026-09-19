@@ -67,8 +67,8 @@ export class KnowledgeEmbeddingProxy {
    * embedding route shares it rather than keeping a second, parallel setting
    * that could disagree with the chat route.
    */
-  static fromAppStorage(): KnowledgeEmbeddingProxy {
-    const backend = AiBackend.fromAppStorage();
+  static current(): KnowledgeEmbeddingProxy {
+    const backend = AiBackend.current();
     return new KnowledgeEmbeddingProxy(backend.getBaseUrl(), backend.getToken());
   }
 
@@ -242,8 +242,8 @@ export class KnowledgeProxyEmbedder {
     this.proxy = proxy;
   }
 
-  static fromAppStorage(): KnowledgeProxyEmbedder {
-    return new KnowledgeProxyEmbedder(KnowledgeEmbeddingProxy.fromAppStorage());
+  static current(): KnowledgeProxyEmbedder {
+    return new KnowledgeProxyEmbedder(KnowledgeEmbeddingProxy.current());
   }
 
   isConfigured(): boolean {
