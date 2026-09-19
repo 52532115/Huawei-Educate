@@ -204,6 +204,49 @@ function loadIndexStore(fsPrelude) {
 global.__indexStoreModule = loadIndexStore('');
 global.__loadIndexStore = loadIndexStore;
 
+// ---------- L. embedding proxy: the one network-facing piece ----------
+// Loaded against an in-memory `http` stub, installed before the module loads so
+// the module-level capture sees it (the same trap as the fs stub in group J).
+//
+// This sits *before* the store, not with the rest of group L, because the store
+// now owns the dense lifecycle: `searchBest` decides when to embed, so the
+// facade needs the real proxy class and the real signature→weight mapping
+// injected, exactly like chunker/index/corpus. The proxy checks themselves
+// still run further down, where the group belongs.
+global.__httpStub = {
+  created: 0, destroyed: 0, calls: [], responseCode: 200, result: '',
+  rejectOnRequest: false,
+};
+const HTTP_STUB = `
+const __http = global.__httpStub;
+const http = {
+  RequestMethod: { POST: 'POST' },
+  HttpDataType: { STRING: 0 },
+  createHttp() {
+    __http.created++;
+    return {
+      request(url, options) {
+        __http.calls.push({ url, options });
+        if (__http.rejectOnRequest) {
+          return Promise.reject(new Error('network down'));
+        }
+        return Promise.resolve({ responseCode: __http.responseCode, result: __http.result });
+      },
+      destroy() { __http.destroyed++; },
+    };
+  },
+};
+const Logger = { info() {}, warn() {}, error() {}, debug() {} };
+`;
+const aiBackendModule = loadArkTs(`${SERVICE_DIR}AiBackend.ets`);
+global.__aiBackendModule = aiBackendModule;
+const proxyModule = loadArkTs(`${SERVICE_DIR}KnowledgeEmbeddingProxy.ets`,
+  `${MODEL_STUB}\nconst { KnowledgeEmbeddingBatch } = global.__embeddingModule;\n` +
+  `const { RRF_DEFAULT_VECTOR_WEIGHT, RRF_REMOTE_VECTOR_WEIGHT } = global.__vectorModule;\n` +
+  `const { AiBackend, BACKEND_EMBED_PATH } = global.__aiBackendModule;\n${HTTP_STUB}`);
+global.__proxyModule = proxyModule;
+const proxySrc = readSource(`${SERVICE_DIR}KnowledgeEmbeddingProxy.ets`);
+
 const STORE_DEPS = `
 const { KnowledgeChunker } = global.__chunkerModule;
 const { KnowledgeIndex } = global.__indexModule;
@@ -212,7 +255,10 @@ const { buildCourseCatalog, CATALOG_ROW_COUNT } = global.__catalogModule;
 const { buildLectureNotes } = global.__notesCatalogModule;
 const { KnowledgeIndexStore } = global.__indexStoreModule;
 const { fingerprintChunks, KNOWLEDGE_SNAPSHOT_VERSION } = global.__codecModule;
-const { KnowledgeVectorRetriever, fuseRankings } = global.__vectorModule;
+const { KnowledgeVectorRetriever, fuseRankings, RRF_RANK_CONSTANT,
+  RRF_DEFAULT_VECTOR_WEIGHT } = global.__vectorModule;
+const { KnowledgeProxyEmbedder, vectorWeightForSignature } = global.__proxyModule;
+const { KnowledgeEmbeddingBatch, documentTextFor } = global.__embeddingModule;
 class AdaptivePracticeService {
   getShippedQuestionBank() { return global.__providerBank; }
 }
@@ -1279,7 +1325,8 @@ check('I 静态', `聚合入口没有漏掉任何讲义文件（${NOTE_FILES.len
 
 // ---------- J. index persistence (filesDir + derived cache keys) ----------
 
-const { hashString, fingerprintChunks, encodeSnapshot, decodeSnapshot, KNOWLEDGE_SNAPSHOT_VERSION } = codecModule;
+const { hashString, fingerprintChunks, encodeSnapshot, decodeSnapshot, KNOWLEDGE_SNAPSHOT_VERSION,
+  encodeBase64, decodeBase64, quantizeVectors, dequantizeVectors } = codecModule;
 const { KnowledgeIndexStore } = global.__indexStoreModule;
 
 check('J 编码', 'hashString 定长 7 位十六进制、同输入同输出、异输入异输出',
@@ -1677,7 +1724,10 @@ const {
   LocalHashingEmbedder, EMBEDDING_DIMENSION, hashToBucket, cosineSimilarity,
   normalizeVector, documentTextFor,
 } = embeddingModule;
-const { KnowledgeVectorRetriever, fuseRankings, RRF_RANK_CONSTANT, RRF_DEFAULT_VECTOR_WEIGHT } = vectorModule;
+const { KnowledgeVectorRetriever, fuseRankings, RRF_RANK_CONSTANT, RRF_DEFAULT_VECTOR_WEIGHT,
+  RRF_REMOTE_VECTOR_WEIGHT } = vectorModule;
+const { KnowledgeProxyEmbedder, vectorWeightForSignature } = proxyModule;
+const DENSE_EMBED_BATCH_SIZE_FOR_TEST = storeModule.DENSE_EMBED_BATCH_SIZE;
 const HYBRID_CANDIDATE_DEPTH_FOR_TEST = storeModule.HYBRID_CANDIDATE_DEPTH;
 
 const embedder = new LocalHashingEmbedder();
@@ -1822,6 +1872,10 @@ check('L 融合', '两路的命中词合并去重；空输入得到空结果',
   })(), '三次,握手,连接', '三次,握手,连接');
 
 // --- vectors survive the snapshot round trip ---
+// The vectors are int8-quantised on the way to disk (see the codec), so a
+// byte-for-byte float comparison would be asserting the wrong thing — that the
+// file is uncompressed. What has to hold is that the ranking is unchanged and
+// that the error is inside the quantisation bound, which is what these read.
 const vectorSnapshot = {
   version: KNOWLEDGE_SNAPSHOT_VERSION, fingerprint: 'fp2', signature: 'sg2',
   vectorSignature: embedder.signature(), chunks: denseChunks, state: (() => {
@@ -1836,12 +1890,46 @@ const restoredRetriever = new KnowledgeVectorRetriever();
 const restoredOk = vectorDecoded !== null &&
   restoredRetriever.build(vectorDecoded.vectors, vectorDecoded.chunks);
 
-check('L 落盘', '向量能随快照完整往返（不同嵌入器的向量必须能分别识别与恢复）',
+/** Largest half-step any row in `rows` could have been rounded by. */
+function quantisationBound(rows) {
+  let bound = 0;
+  for (const row of rows) {
+    let maxAbs = 0;
+    for (const value of row) {
+      maxAbs = Math.max(maxAbs, Math.abs(value));
+    }
+    bound = Math.max(bound, maxAbs / 127 / 2);
+  }
+  return bound;
+}
+
+const restoredRows = restoredOk ? restoredRetriever.exportVectors() : [];
+let vectorMaxError = 0;
+let restoredNonZero = false;
+for (let i = 0; i < restoredRows.length; i++) {
+  for (let v = 0; v < restoredRows[i].length; v++) {
+    vectorMaxError = Math.max(vectorMaxError, Math.abs(restoredRows[i][v] - denseVectors[i][v]));
+    if (restoredRows[i][v] !== 0) {
+      restoredNonZero = true;
+    }
+  }
+}
+const vectorProbes = ['TCP 三次握手 建立连接', '进程 线程 调度', '二叉搜索树 中序遍历', '事务 ACID'];
+const vectorRankingSame = vectorProbes.every((probe) => {
+  const query = embedder.embed(probe);
+  const before = denseRetriever.search(query, 4).map(h => h.chunk.chunkId).join('|');
+  const after = restoredRetriever.search(query, 4).map(h => h.chunk.chunkId).join('|');
+  return before === after && before.length > 0;
+});
+
+check('L 落盘', '向量随快照往返后排序逐位不变，且误差不超过量化半步（不是「存了个零向量」）',
   restoredOk && restoredRetriever.size() === 4 &&
   vectorDecoded.vectorSignature === embedder.signature() &&
-  JSON.stringify(restoredRetriever.exportVectors()) === JSON.stringify(denseVectors),
-  { restored: restoredRetriever.size(), signature: vectorDecoded ? vectorDecoded.vectorSignature : '' },
-  { restored: 4, signature: embedder.signature() });
+  vectorRankingSame && restoredNonZero && vectorMaxError <= quantisationBound(denseVectors) + 1e-9,
+  { restored: restoredRetriever.size(), rankingSame: vectorRankingSame,
+    maxError: Number(vectorMaxError.toFixed(8)),
+    bound: Number(quantisationBound(denseVectors).toFixed(8)) },
+  { restored: 4, rankingSame: true, maxError: '<= bound' });
 
 check('L 落盘', '带向量但没有来源签名 → 拒绝读取（来源不明的向量不可校验，不如重算）',
   (() => {
@@ -1850,12 +1938,124 @@ check('L 落盘', '带向量但没有来源签名 → 拒绝读取（来源不�
     return decodeSnapshot(JSON.stringify(bad)) === null;
   })(), null, null);
 
-check('L 落盘', '向量数量与块数不一致 → 拒绝读取',
+check('L 落盘', '向量数量与块数不一致 → 拒绝读取（打包形式与旧的浮点形式都要挡住）',
   (() => {
-    const bad = JSON.parse(vectorJson);
-    bad.vectors = bad.vectors.slice(0, 2);
-    return decodeSnapshot(JSON.stringify(bad)) === null;
+    const packedBad = JSON.parse(vectorJson);
+    packedBad.vectorsQuantized = packedBad.vectorsQuantized.slice(0, 2);
+    packedBad.vectorScales = packedBad.vectorScales.slice(0, 2);
+    const legacyBad = JSON.parse(vectorJson);
+    legacyBad.vectors = [[1, 0, 0]];
+    delete legacyBad.vectorsQuantized;
+    delete legacyBad.vectorScales;
+    return decodeSnapshot(JSON.stringify(packedBad)) === null &&
+      decodeSnapshot(JSON.stringify(legacyBad)) === null;
   })(), null, null);
+
+check('J 编码', 'base64 往返：长度 1~70 逐一验证，含补位与整三字节边界',
+  (() => {
+    for (let length = 1; length <= 70; length++) {
+      const bytes = [];
+      for (let i = 0; i < length; i++) {
+        bytes.push((i * 37 + length * 11) % 256);
+      }
+      const text = encodeBase64(bytes);
+      if (text.length !== Math.ceil(length / 3) * 4) {
+        return false;
+      }
+      const back = decodeBase64(text);
+      if (back.length !== bytes.length || back.join(',') !== bytes.join(',')) {
+        return false;
+      }
+    }
+    return encodeBase64([0]) === 'AA==' && encodeBase64([255]) === '/w==' &&
+      encodeBase64([]) === '' && decodeBase64('').length === 0;
+  })(), 'all lengths round-trip', 'all lengths round-trip');
+
+// How the packing pays off depends on the vectors, so both kinds are measured.
+// The real embedder returns dense vectors. The offline stand-in returns a
+// sparse hashed bag, where most slots are exactly 0 — and a 0 costs one byte as
+// a float yet still costs a full base64 slot, so sparse data is this encoding's
+// worst case rather than a representative one. Only the dense numbers are
+// asserted on; the sparse ones are recorded so the difference is visible.
+function packedSize(rows) {
+  const packed = quantizeVectors(rows);
+  const float = JSON.stringify(rows).length;
+  const packedLength = JSON.stringify(packed.rows).length + JSON.stringify(packed.scales).length;
+  return { floatKB: Math.round(float / 1024), packedKB: Math.round(packedLength / 1024),
+    ratio: Number((float / packedLength).toFixed(1)), rows: packed.rows.length };
+}
+
+const denseProbe = [];
+for (let row = 0; row < realChunks.length; row++) {
+  const values = [];
+  for (let v = 0; v < 1024; v++) {
+    const noise = Math.sin((row * 1024 + v) * 12.9898) * 43758.5453;
+    values.push(noise - Math.floor(noise) - 0.5);
+  }
+  denseProbe.push(values);
+}
+const denseStorage = packedSize(denseProbe);
+const sparseStorage = packedSize(realChunks.map(c => embedder.embed(documentTextFor(c))));
+
+check('J 编码', '打包后的载荷比浮点 JSON 小一个数量级（稠密向量；稀疏是最坏情况，比值见 actual）',
+  denseStorage.rows === denseProbe.length && denseStorage.ratio > 10 &&
+  denseStorage.packedKB * 10 < denseStorage.floatKB,
+  { dense: denseStorage, sparse: sparseStorage },
+  { denseRatio: '> 10x' });
+
+check('J 编码', '快照文件里写的是打包向量而不是浮点数组（否则体积回到 MB 量级，缓存反而拖慢启动）',
+  (() => {
+    const raw = JSON.parse(vectorJson);
+    return Array.isArray(raw.vectors) && raw.vectors.length === 0 &&
+      Array.isArray(raw.vectorsQuantized) && raw.vectorsQuantized.length === denseChunks.length &&
+      raw.vectorScales.length === denseChunks.length &&
+      typeof raw.vectorsQuantized[0] === 'string' && raw.vectorsQuantized[0].length > 0 &&
+      isFinite(raw.vectorScales[0]) && raw.vectorScales[0] > 0;
+  })(), (() => {
+    const raw = JSON.parse(vectorJson);
+    return { floatRows: (raw.vectors || []).length, packedRows: (raw.vectorsQuantized || []).length,
+      scales: (raw.vectorScales || []).length };
+  })(), { floatRows: 0, packedRows: denseChunks.length, scales: denseChunks.length });
+
+check('J 编码', '量化的整数域覆盖正负两端：带符号向量往返后两端的符号都还在，误差仍在半步内',
+  (() => {
+    // The offline stand-in cannot cover this: its slots are `1 + log(count)`,
+    // so every component is non-negative and an encoding that quietly clamps
+    // negatives to zero looks perfect on it. A real embedding model returns
+    // signed values, so the sign path needs a fixture that actually has signs.
+    const signed = [[-0.5, -0.125, 0, 0.125, 0.5, -1, 0.75]];
+    const set = quantizeVectors(signed);
+    const back = dequantizeVectors(set.scales, set.rows);
+    if (back === null || back.length !== 1 || back[0].length !== signed[0].length) {
+      return false;
+    }
+    const bound = 1 / 127 / 2 + 1e-9;
+    for (let i = 0; i < back[0].length; i++) {
+      if (Math.abs(back[0][i] - signed[0][i]) > bound) {
+        return false;
+      }
+    }
+    return back[0][0] < 0 && back[0][1] < 0 && back[0][2] === 0 &&
+      back[0][3] > 0 && back[0][4] > 0 && back[0][5] < 0 && back[0][6] > 0;
+  })(), (() => {
+    const set = quantizeVectors([[-0.5, -0.125, 0, 0.125, 0.5, -1, 0.75]]);
+    const back = dequantizeVectors(set.scales, set.rows);
+    return back === null ? 'null' : back[0].map(v => Number(v.toFixed(5)));
+  })(), 'signs preserved, error <= half step');
+
+check('J 编码', '打包载荷损坏的每一种形状都被拒绝（半可信的向量比没有向量更糟）',
+  (() => {
+    const good = quantizeVectors(denseVectors);
+    const scalesOff = dequantizeVectors(good.scales.slice(0, 2), good.rows);
+    const emptyRow = dequantizeVectors(good.scales, good.rows.map((row, i) => (i === 0 ? '' : row)));
+    const raggedRow = dequantizeVectors(good.scales,
+      good.rows.map((row, i) => (i === 0 ? encodeBase64([1, 2, 3]) : encodeBase64([1, 2]))));
+    const badScale = dequantizeVectors(good.scales.map((scale, i) => (i === 0 ? 0 : scale)), good.rows);
+    const nanScale = dequantizeVectors(good.scales.map((scale, i) => (i === 0 ? NaN : scale)), good.rows);
+    return scalesOff === null && emptyRow === null && raggedRow === null &&
+      badScale === null && nanScale === null &&
+      dequantizeVectors(good.scales, good.rows) !== null;
+  })(), 'all rejected', 'all rejected');
 
 // --- store integration: install, cache, degrade ---
 const vectorFs = resetFs();
@@ -1991,40 +2191,9 @@ check('L 静态', '没有任何服务会自动装上本地嵌入器（稠密侧�
     chat: chatVmSrc.indexOf('LocalHashingEmbedder') >= 0 },
   { store: false, chat: false });
 
-// ---------- L. embedding proxy: the one network-facing piece ----------
-// Loaded against an in-memory `http` stub, installed before the module loads so
-// the module-level capture sees it (the same trap as the fs stub in group J).
-global.__httpStub = {
-  created: 0, destroyed: 0, calls: [], responseCode: 200, result: '',
-  rejectOnRequest: false,
-};
-const HTTP_STUB = `
-const __http = global.__httpStub;
-const http = {
-  RequestMethod: { POST: 'POST' },
-  HttpDataType: { STRING: 0 },
-  createHttp() {
-    __http.created++;
-    return {
-      request(url, options) {
-        __http.calls.push({ url, options });
-        if (__http.rejectOnRequest) {
-          return Promise.reject(new Error('network down'));
-        }
-        return Promise.resolve({ responseCode: __http.responseCode, result: __http.result });
-      },
-      destroy() { __http.destroyed++; },
-    };
-  },
-};
-const Logger = { info() {}, warn() {}, error() {}, debug() {} };
-`;
-const aiBackendModule = loadArkTs(`${SERVICE_DIR}AiBackend.ets`);
-global.__aiBackendModule = aiBackendModule;
-const proxyModule = loadArkTs(`${SERVICE_DIR}KnowledgeEmbeddingProxy.ets`,
-  `${MODEL_STUB}\nconst { KnowledgeEmbeddingBatch } = global.__embeddingModule;\n` +
-  `const { AiBackend, BACKEND_EMBED_PATH } = global.__aiBackendModule;\n${HTTP_STUB}`);
-const proxySrc = readSource(`${SERVICE_DIR}KnowledgeEmbeddingProxy.ets`);
+// The proxy module, its http stub and `proxySrc` are published up top, beside
+// the facade that now drives them. The checks that exercise the wire protocol
+// start here.
 
 async function runEmbeddingProxyChecks() {
   const { KnowledgeEmbeddingProxy, parseEmbeddingResponse } = proxyModule;
@@ -2175,10 +2344,33 @@ check('M 接线', 'filesDir 在 loadContent 之前发布（晚于页面就会让
   filesDirAt >= 0 && loadContentAt >= 0 && filesDirAt < loadContentAt,
   { filesDirAt, loadContentAt }, 'filesDir published first');
 
-check('M 静态', '预热不联网：KnowledgeStore 不引用嵌入代理，启动不会偷偷发出请求',
-  storeSrc.indexOf('EmbeddingProxy') < 0 && storeSrc.indexOf('http') < 0,
-  { proxy: storeSrc.indexOf('EmbeddingProxy') >= 0, http: storeSrc.indexOf('http') >= 0 },
-  { proxy: false, http: false });
+// The promise here is "start-up makes no requests". It used to be expressed as
+// "KnowledgeStore never mentions the embedding proxy", which was only ever a
+// stand-in for the real property — and it stopped being true once the store took
+// over the dense lifecycle, because deciding *when* to embed is exactly what the
+// facade now does. So assert the reachability itself: the warm-up path must not
+// be able to reach the embedder, while the search path must still be able to.
+// The positive half is what keeps this from passing on a store that embeds
+// nothing at all. Group N proves the same thing behaviourally.
+const warmUpSource = [
+  storeSrc.slice(storeSrc.indexOf('static scheduleWarmUp'), storeSrc.indexOf('static resetWarmUpSchedule')),
+  storeSrc.slice(storeSrc.indexOf('  warmUp(): void'), storeSrc.indexOf('  getLoadSource()')),
+  storeSrc.slice(storeSrc.indexOf('private ensureBuilt(): void'),
+    storeSrc.indexOf('private restoreCachedVectors')),
+].join('\n');
+const embedderTokens = ['embedBatch', 'startDenseBuild', 'densePromise', 'KnowledgeProxyEmbedder',
+  'embedder('];
+const warmUpReachesEmbedder = embedderTokens.some((token) => warmUpSource.indexOf(token) >= 0);
+const searchPathReachesEmbedder = storeSrc.slice(storeSrc.indexOf('  async searchBest('))
+  .indexOf('embedBatch') >= 0;
+
+check('M 静态', '预热不联网：启动路径（scheduleWarmUp / warmUp / ensureBuilt）到不了嵌入器，不发请求',
+  storeSrc.indexOf('http') < 0 && warmUpSource.length > 0 &&
+  warmUpReachesEmbedder === false && searchPathReachesEmbedder === true,
+  { http: storeSrc.indexOf('http') >= 0, warmUpReachesEmbedder: warmUpReachesEmbedder,
+    searchPathReachesEmbedder: searchPathReachesEmbedder,
+    warmUpSourceSliced: warmUpSource.length > 0 },
+  { http: false, warmUpReachesEmbedder: false, searchPathReachesEmbedder: true });
 
 const warmTarget = KnowledgeStore.getInstance();
 warmTarget.invalidate();
@@ -2249,6 +2441,248 @@ check('M 预热', '门面同时保留调度入口、重置钩子与公开 warmUp
   { schedule: typeof KnowledgeStore.scheduleWarmUp, reset: typeof KnowledgeStore.resetWarmUpSchedule },
   { schedule: 'function', reset: 'function' });
 
+// ---------- N. dense lifecycle: build, single-flight, degrade ----------
+// The dense side is the only part of retrieval that touches the network, so
+// every way it can fail has to be exercised without one. The fake records what
+// was asked for, which turns "did it re-embed the whole corpus?" from an
+// assumption into an observable number — including the billable one.
+function makeFakeEmbedder(options = {}) {
+  const state = {
+    configured: options.configured !== false,
+    fail: options.fail === true,
+    width: options.width || EMBEDDING_DIMENSION,
+    endpoint: options.endpoint || 'http://fake.local:8787/embed',
+    signature: options.signature || `remote:fake-model:${options.width || EMBEDDING_DIMENSION}`,
+    weight: options.weight === undefined ? RRF_REMOTE_VECTOR_WEIGHT : options.weight,
+    gate: null,
+    calls: [],
+  };
+  const source = new LocalHashingEmbedder(state.width);
+  const embedder = {
+    isConfigured() { return state.configured; },
+    endpointKey() { return state.endpoint; },
+    recommendedWeight() { return state.weight; },
+    model() { return 'fake-model'; },
+    signature() { return state.signature; },
+    async embedBatch(texts) {
+      state.calls.push(texts.slice());
+      // The gate holds whole-corpus batches, not a single query embed: tests
+      // switch backends mid-question, and a query that cannot complete would
+      // deadlock the very path being tested.
+      if (state.gate !== null && texts.length > 1) { await state.gate; }
+      if (state.fail) { return null; }
+      return { model: 'fake-model', dimension: state.width, vectors: texts.map(t => source.embed(t)) };
+    },
+  };
+  state.embedder = embedder;
+  return state;
+}
+
+/** Spins the event loop until the background build has settled. */
+async function settleDense(store, maxTicks = 500) {
+  for (let tick = 0; tick < maxTicks && store.isDensePending(); tick++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return store.isDensePending() === false;
+}
+
+const idsOf = (hits) => hits.map(h => h.chunk.chunkId).join('|');
+const textsIn = (state) => state.calls.reduce((total, batch) => total + batch.length, 0);
+const docTextsIn = (state) => state.calls.filter(b => b.length > 1)
+  .reduce((total, batch) => total + batch.length, 0);
+
+async function runDenseLifecycleChecks() {
+  const question = 'TCP 三次握手 为什么要三次';
+
+  // --- not configured: the whole dense side must be invisible ---
+  resetFs();
+  const offState = makeFakeEmbedder({ configured: false });
+  const offStore = runStore();
+  offStore.setEmbedder(offState.embedder);
+  const offHits = await offStore.searchBest(question, 4);
+  check('N 稠密', '没配后端：一个嵌入请求都不发，结果与纯词法逐条一致',
+    offState.calls.length === 0 && offStore.hasVectors() === false &&
+    idsOf(offHits) === idsOf(offStore.search(question, 4)) && offHits.length > 0,
+    { requests: offState.calls.length, hasVectors: offStore.hasVectors(),
+      same: idsOf(offHits) === idsOf(offStore.search(question, 4)) },
+    { requests: 0, hasVectors: false, same: true });
+
+  // --- the behavioural half of the static warm-up guard in group M ---
+  resetFs();
+  const warmupState = makeFakeEmbedder();
+  const warmupStore = buildStore();
+  warmupStore.setEmbedder(warmupState.embedder);
+  warmupStore.warmUp();
+  await settleDense(warmupStore);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  check('N 稠密', '预热只建索引、不碰嵌入器：配了后端也不会让启动偷偷发出请求',
+    warmupState.calls.length === 0 && warmupStore.hasVectors() === false &&
+    warmupStore.getLoadSource() === 'rebuild',
+    { requests: warmupState.calls.length, hasVectors: warmupStore.hasVectors(),
+      source: warmupStore.getLoadSource() },
+    { requests: 0, hasVectors: false, source: 'rebuild' });
+
+  // --- first question must not wait for 243 embeddings ---
+  resetFs();
+  const gatedState = makeFakeEmbedder();
+  const gatedStore = runStore();
+  gatedStore.setEmbedder(gatedState.embedder);
+  let releaseGate = null;
+  gatedState.gate = new Promise((resolve) => { releaseGate = resolve; });
+  const firstHits = await gatedStore.searchBest(question, 4);
+  const pendingDuring = gatedStore.isDensePending();
+  const firstWasLexical = idsOf(firstHits) === idsOf(gatedStore.search(question, 4));
+  releaseGate();
+  const settled = await settleDense(gatedStore);
+  const upgradeHits = await gatedStore.searchBest(question, 4);
+  const docBatches = gatedState.calls.filter(b => b.length > 1).length;
+
+  check('N 稠密', '首次提问不等嵌入：先给词法结果，同时后台已在建向量（否则首问要等十个网络往返）',
+    firstWasLexical && pendingDuring === true && gatedState.calls.length > 0 && firstHits.length > 0,
+    { firstWasLexical: firstWasLexical, buildPending: pendingDuring,
+      callsSoFar: gatedState.calls.length },
+    { firstWasLexical: true, buildPending: true });
+
+  check('N 稠密', '后台建好后稠密侧就位、权重取远端实测值、下一次提问走融合',
+    settled && gatedStore.hasVectors() === true &&
+    gatedStore.getVectorWeight() === RRF_REMOTE_VECTOR_WEIGHT &&
+    upgradeHits.length > 0 && upgradeHits.every(h => h.retriever === 'hybrid'),
+    { settled: settled, hasVectors: gatedStore.hasVectors(),
+      weight: gatedStore.getVectorWeight(),
+      retrievers: Array.from(new Set(upgradeHits.map(h => h.retriever))) },
+    { settled: true, hasVectors: true, weight: RRF_REMOTE_VECTOR_WEIGHT, retrievers: ['hybrid'] });
+
+  check('N 稠密', '整份语料按批次发完，每块恰好嵌一次，批大小不超过约定值',
+    docBatches === Math.ceil(realChunks.length / DENSE_EMBED_BATCH_SIZE_FOR_TEST) &&
+    docTextsIn(gatedState) === realChunks.length &&
+    gatedState.calls.filter(b => b.length > 1)
+      .every(b => b.length <= DENSE_EMBED_BATCH_SIZE_FOR_TEST),
+    { batches: docBatches, docTexts: docTextsIn(gatedState),
+      batchSize: DENSE_EMBED_BATCH_SIZE_FOR_TEST },
+    { batches: Math.ceil(realChunks.length / DENSE_EMBED_BATCH_SIZE_FOR_TEST),
+      docTexts: realChunks.length });
+
+  // --- single flight ---
+  resetFs();
+  const flightState = makeFakeEmbedder();
+  const flightStore = runStore();
+  flightStore.setEmbedder(flightState.embedder);
+  let releaseFlight = null;
+  flightState.gate = new Promise((resolve) => { releaseFlight = resolve; });
+  const concurrent = await Promise.all([
+    flightStore.searchBest('三次握手', 4),
+    flightStore.searchBest('进程 线程 调度', 4),
+    flightStore.searchBest('二叉搜索树 遍历', 4),
+  ]);
+  const pendingForAll = flightStore.isDensePending();
+  releaseFlight();
+  await settleDense(flightStore);
+  check('N 稠密', '并发触发只嵌一份语料（单飞）：三个调用者叠在一起，块也只被嵌一次',
+    pendingForAll === true && concurrent.length === 3 &&
+    docTextsIn(flightState) === realChunks.length,
+    { docTextsEmbedded: docTextsIn(flightState), chunks: realChunks.length,
+      callers: concurrent.length },
+    { docTextsEmbedded: realChunks.length, callers: 3 });
+
+  // --- a dead endpoint fails once, not once per question ---
+  resetFs();
+  const deadState = makeFakeEmbedder({ fail: true });
+  const deadStore = runStore();
+  deadStore.setEmbedder(deadState.embedder);
+  const deadFirst = await deadStore.searchBest(question, 4);
+  await settleDense(deadStore);
+  const callsAfterFirst = deadState.calls.length;
+  const deadSecond = await deadStore.searchBest(question, 4);
+  await settleDense(deadStore);
+  check('N 稠密', '嵌入失败会粘在该端点上：第二次提问不再重试（一次超时，而不是每次提问一次）',
+    callsAfterFirst > 0 && deadState.calls.length === callsAfterFirst &&
+    deadStore.hasVectors() === false &&
+    idsOf(deadFirst) === idsOf(deadStore.search(question, 4)) &&
+    idsOf(deadSecond) === idsOf(deadStore.search(question, 4)),
+    { callsAfterFirst: callsAfterFirst, callsAfterSecond: deadState.calls.length,
+      hasVectors: deadStore.hasVectors() },
+    { callsAfterFirst: callsAfterFirst, callsAfterSecond: callsAfterFirst, hasVectors: false });
+
+  // --- ...but correcting the address retries, without a restart ---
+  deadState.fail = false;
+  deadState.endpoint = 'http://fake.local:9999/embed';
+  await deadStore.searchBest(question, 4);
+  const revived = await settleDense(deadStore) && deadStore.hasVectors();
+  check('N 稠密', '端点换了就重新尝试（改完设置面板不必重启），且不继承上一个端点的失败',
+    deadState.calls.length > callsAfterFirst && revived === true &&
+    deadStore.getVectorWeight() === RRF_REMOTE_VECTOR_WEIGHT,
+    { calls: deadState.calls.length, hasVectors: deadStore.hasVectors(),
+      weight: deadStore.getVectorWeight() },
+    { calls: `> ${callsAfterFirst}`, hasVectors: true, weight: RRF_REMOTE_VECTOR_WEIGHT });
+
+  // --- warm start: the snapshot is what makes this affordable ---
+  const warmState = makeFakeEmbedder();
+  const warmStoreAgain = buildStore();
+  warmStoreAgain.setEmbedder(warmState.embedder);
+  const warmHits = await warmStoreAgain.searchBest(question, 4);
+  await settleDense(warmStoreAgain);
+  check('N 稠密', '暖启动：向量从快照恢复，一次文档嵌入都没有，只发查询那一次请求',
+    warmStoreAgain.hasVectors() === true && warmStoreAgain.getLoadSource() === 'cache' &&
+    textsIn(warmState) === 1 && warmState.calls.length === 1 &&
+    warmStoreAgain.getVectorWeight() === RRF_REMOTE_VECTOR_WEIGHT &&
+    warmHits.length > 0 && warmHits.every(h => h.retriever === 'hybrid'),
+    { source: warmStoreAgain.getLoadSource(), calls: warmState.calls.length,
+      texts: textsIn(warmState), weight: warmStoreAgain.getVectorWeight() },
+    { source: 'cache', calls: 1, texts: 1, weight: RRF_REMOTE_VECTOR_WEIGHT });
+
+  // --- switching the model behind the same address must not mix vector sets ---
+  resetFs();
+  const mixState = makeFakeEmbedder({ signature: 'remote:model-a:256' });
+  const mixStore = runStore();
+  mixStore.setEmbedder(mixState.embedder);
+  await mixStore.searchBest(question, 4);
+  await settleDense(mixStore);
+  const installedSource = mixStore.getVectorSource();
+  const otherState = makeFakeEmbedder({
+    endpoint: mixState.endpoint, signature: 'remote:model-b:256',
+  });
+  let releaseOther = null;
+  otherState.gate = new Promise((resolve) => { releaseOther = resolve; });
+  mixStore.setEmbedder(otherState.embedder);
+  const mixedHits = await mixStore.searchBest(question, 4);
+  const droppedImmediately = mixStore.hasVectors() === false;
+  const sourceAfterSwitch = mixStore.getVectorSource();
+  releaseOther();
+  await settleDense(mixStore);
+  check('N 稠密', '同一个地址换了模型：不拿旧模型的向量配新模型的查询，丢弃并按新模型重建',
+    installedSource === 'remote:model-a:256' && droppedImmediately === true &&
+    sourceAfterSwitch === '' &&
+    idsOf(mixedHits) === idsOf(mixStore.search(question, 4)) &&
+    mixStore.hasVectors() === true && mixStore.getVectorSource() === 'remote:model-b:256',
+    { installed: installedSource, dropped: droppedImmediately, afterSwitch: sourceAfterSwitch,
+      final: mixStore.getVectorSource() },
+    { installed: 'remote:model-a:256', dropped: true, afterSwitch: '',
+      final: 'remote:model-b:256' });
+
+  // --- the weight belongs to the embedder, not to the fusion ---
+  check('N 稠密', '融合权重由「谁产出了向量」决定：远端签名取实测等权，其它签名取保守权重',
+    vectorWeightForSignature('remote:text-embedding-v3:1024') === RRF_REMOTE_VECTOR_WEIGHT &&
+    vectorWeightForSignature('local-hash-v1:256:0abc123') === RRF_DEFAULT_VECTOR_WEIGHT &&
+    vectorWeightForSignature('') === RRF_DEFAULT_VECTOR_WEIGHT &&
+    RRF_REMOTE_VECTOR_WEIGHT !== RRF_DEFAULT_VECTOR_WEIGHT,
+    { remote: vectorWeightForSignature('remote:text-embedding-v3:1024'),
+      other: vectorWeightForSignature('local-hash-v1:256:0abc123') },
+    { remote: RRF_REMOTE_VECTOR_WEIGHT, other: RRF_DEFAULT_VECTOR_WEIGHT });
+
+  // --- the fast path and the agent tool share one index, and both are wired ---
+  check('N 接线', '两条问答通路都改走 searchBest（接线只改一处会留下一条纯词法路径）',
+    chatVmSrc.indexOf('knowledgeStore.searchBest') >= 0 &&
+    toolsSrc.indexOf('knowledgeStore.searchBest') >= 0 &&
+    toolsSrc.indexOf('private async toolSearchCourseKnowledge') >= 0 &&
+    chatVmSrc.indexOf('knowledgeStore.search(') < 0 &&
+    toolsSrc.indexOf('knowledgeStore.search(') < 0,
+    { chat: chatVmSrc.indexOf('knowledgeStore.searchBest') >= 0,
+      tools: toolsSrc.indexOf('knowledgeStore.searchBest') >= 0,
+      chatStillLexical: chatVmSrc.indexOf('knowledgeStore.search(') >= 0,
+      toolsStillLexical: toolsSrc.indexOf('knowledgeStore.search(') >= 0 },
+    { chat: true, tools: true, chatStillLexical: false, toolsStillLexical: false });
+}
+
 // ---------- report ----------
 function finish() {
   fs.writeFileSync(path.join(__dirname, 'ai_agent_p7_test_result.json'), JSON.stringify(results, null, 2));
@@ -2256,8 +2690,8 @@ function finish() {
   process.exit(failures > 0 ? 1 : 0);
 }
 
-runEmbeddingProxyChecks().then(finish, (error) => {
-  results.push({ group: 'L 代理', name: '代理测试自身不应抛异常', status: 'FAIL',
+runEmbeddingProxyChecks().then(runDenseLifecycleChecks).then(finish, (error) => {
+  results.push({ group: 'L 代理', name: '代理与稠密生命周期测试自身不应抛异常', status: 'FAIL',
     actual: String(error), expected: 'no throw' });
   failures++;
   finish();

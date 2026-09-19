@@ -162,6 +162,37 @@ const vectorModule = loadArkTs(`${SERVICE_DIR}KnowledgeVectorRetriever.ets`,
   `${MODEL_STUB}\nconst { cosineSimilarity } = global.__embeddingModule;`);
 global.__vectorModule = vectorModule;
 
+// The embedding proxy is loaded for real (against an inert `http` stub) rather
+// than faked, because `KnowledgeStore` imports the real class and the real
+// signature→weight mapping. A hand-written stand-in here would be a second copy
+// of that mapping, and a second copy is exactly how a warm start ends up
+// weighting cached vectors differently from the run that wrote them. Nothing in
+// this script calls that path — it embeds through the backend directly and
+// passes explicit vector weights to `fuseRankings` — but the imports must
+// resolve against the genuine article.
+global.__httpStub = { created: 0, destroyed: 0, calls: [] };
+const HTTP_STUB = `
+const __http = global.__httpStub;
+const http = {
+  RequestMethod: { POST: 'POST' },
+  HttpDataType: { STRING: 0 },
+  createHttp() {
+    __http.created++;
+    return {
+      request(url, options) { __http.calls.push({ url, options }); return Promise.resolve({ responseCode: 503, result: '' }); },
+      destroy() { __http.destroyed++; },
+    };
+  },
+};
+const Logger = { info() {}, warn() {}, error() {}, debug() {} };
+`;
+global.__aiBackendModule = loadArkTs(`${SERVICE_DIR}AiBackend.ets`);
+const proxyModule = loadArkTs(`${SERVICE_DIR}KnowledgeEmbeddingProxy.ets`,
+  `${MODEL_STUB}\nconst { KnowledgeEmbeddingBatch } = global.__embeddingModule;\n` +
+  `const { RRF_DEFAULT_VECTOR_WEIGHT, RRF_REMOTE_VECTOR_WEIGHT } = global.__vectorModule;\n` +
+  `const { AiBackend, BACKEND_EMBED_PATH } = global.__aiBackendModule;\n${HTTP_STUB}`);
+global.__proxyModule = proxyModule;
+
 const metricsModule = loadArkTs(`${SERVICE_DIR}KnowledgeRetrievalMetrics.ets`, MODEL_STUB);
 const evalSetModule = loadArkTs(`${SERVICE_DIR}KnowledgeEvalSet.ets`, MODEL_STUB);
 global.__metricsModule = metricsModule;
@@ -201,7 +232,10 @@ const { buildCourseCatalog, CATALOG_ROW_COUNT } = global.__catalogModule;
 const { buildLectureNotes } = global.__notesCatalogModule;
 const { KnowledgeIndexStore } = global.__indexStoreModule;
 const { fingerprintChunks, KNOWLEDGE_SNAPSHOT_VERSION } = global.__codecModule;
-const { KnowledgeVectorRetriever, fuseRankings } = global.__vectorModule;
+const { KnowledgeVectorRetriever, fuseRankings, RRF_RANK_CONSTANT,
+  RRF_DEFAULT_VECTOR_WEIGHT } = global.__vectorModule;
+const { KnowledgeProxyEmbedder, vectorWeightForSignature } = global.__proxyModule;
+const { KnowledgeEmbeddingBatch, documentTextFor } = global.__embeddingModule;
 class AdaptivePracticeService {
   getShippedQuestionBank() { return global.__providerBank; }
 }
@@ -552,7 +586,8 @@ async function main() {
   const delta = best.recallAt3 - lexical.recallAt3;
   console.log(`  最优权重 ${best.weight}：Recall@3 ${fmt(lexical.recallAt3)} → ${fmt(best.recallAt3)}（${delta >= 0 ? '+' : ''}${fmt(delta)}）`);
   console.log(`  换句话问（paraphrase）：${fmt(lexical.paraphraseRecall)} → ${fmt(best.paraphraseRecall)}`);
-  console.log(`  代码里当前的默认权重是 0.35，对应 Recall@3 ${fmt(sweep[2].recallAt3)}（那是为哈希替身调的，对真模型偏低）`);
+  console.log(`  真模型实际走的权重 ${vectorModule.RRF_REMOTE_VECTOR_WEIGHT}：由 KnowledgeProxyEmbedder.recommendedWeight() 自报，`
+    + `KnowledgeStore.buildDense 安装时带上（保守的 ${vectorModule.RRF_DEFAULT_VECTOR_WEIGHT} 只留给离线替身，对应 Recall@3 ${fmt(sweep[2].recallAt3)}）`);
   console.log(`  稠密侧装上：${installed}`);
   console.log(`  文档嵌入耗时：${embedMs > 0 ? `${embedMs} ms（本次实付）` : '本次命中缓存，未计时'}`);
 

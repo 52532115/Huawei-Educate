@@ -7,6 +7,7 @@
 import { http } from '@kit.NetworkKit';
 import { KnowledgeEmbeddingBatch } from './KnowledgeEmbedding';
 import { AiBackend, BACKEND_EMBED_PATH } from './AiBackend';
+import { RRF_DEFAULT_VECTOR_WEIGHT, RRF_REMOTE_VECTOR_WEIGHT } from './KnowledgeVectorRetriever';
 import { Logger } from '@safe/basic';
 
 /**
@@ -203,6 +204,13 @@ export function parseEmbeddingResponse(raw: string, expectedCount: number): Know
 }
 
 /**
+ * Marks a signature as coming from a remote embedder. `remoteEmbedderSignature`
+ * is the only place that writes it and `isRemoteVectorSignature` the only place
+ * that reads it, so the format stays an implementation detail of this file.
+ */
+const REMOTE_SIGNATURE_PREFIX = 'remote:';
+
+/**
  * Provenance for vectors produced by a remote embedder.
  *
  * Model and width only. Unlike the local embedder's signature — which has to
@@ -216,17 +224,40 @@ export function remoteEmbedderSignature(model: string, dimension: number): strin
     return '';
   }
   const name = typeof model === 'string' && model.length > 0 ? model : 'remote';
-  return `remote:${name}:${dimension}`;
+  return `${REMOTE_SIGNATURE_PREFIX}${name}:${dimension}`;
+}
+
+/** True when a signature was written by `remoteEmbedderSignature`. */
+export function isRemoteVectorSignature(signature: string): boolean {
+  return typeof signature === 'string' && signature.indexOf(REMOTE_SIGNATURE_PREFIX) === 0;
+}
+
+/**
+ * How much a cached dense list should count in the fusion, decided from its
+ * signature alone.
+ *
+ * This is why the weight is not stored in the snapshot: a signature already
+ * says which retriever produced the vectors, and the weight is a property of
+ * that retriever rather than of one particular file. Deriving it here keeps a
+ * warm start behaving exactly like the cold start that wrote the cache — the
+ * failure mode this avoids is a silent difference in ranking between "just
+ * embedded" and "restored from disk", which is the kind of bug that only shows
+ * up as vaguely worse answers.
+ */
+export function vectorWeightForSignature(signature: string): number {
+  return isRemoteVectorSignature(signature) ? RRF_REMOTE_VECTOR_WEIGHT : RRF_DEFAULT_VECTOR_WEIGHT;
 }
 
 /**
  * Adapts the proxy into the same shape the local embedder offers, so the index
  * and the snapshot format do not care which one produced a batch.
  *
- * Installing vectors is the caller's decision, and this class deliberately does
- * not make it: a real embedding model is the only thing that can prove it beats
- * BM25 on this corpus, and the measured answer for the offline stand-in was
- * "no" — so the proxy path stays available but is never switched on by itself.
+ * Installing vectors is still the caller's decision — this class only talks to
+ * the backend — but the question that used to block it has been answered: a
+ * real 1024-dim model does beat BM25 on this corpus by a wide margin (see
+ * `RRF_REMOTE_VECTOR_WEIGHT`), where the offline stand-in did not. So the
+ * `KnowledgeStore` build path installs these, and only when the learner has
+ * actually configured a backend.
  *
  * The signature is only knowable after a successful call, so it stays empty
  * until then. A caller that receives null must therefore keep whatever vectors
@@ -248,6 +279,27 @@ export class KnowledgeProxyEmbedder {
 
   isConfigured(): boolean {
     return this.proxy.isConfigured();
+  }
+
+  /**
+   * Identifies the backend these vectors would come from.
+   *
+   * Used to make a failed build sticky *per endpoint* rather than for the whole
+   * process: an unreachable backend must cost one timeout instead of one per
+   * question, but correcting the address in the settings panel has to take
+   * effect on the next question rather than after a restart.
+   */
+  endpointKey(): string {
+    return this.proxy.url();
+  }
+
+  /**
+   * How much this embedder's rankings deserve to count. See
+   * `RRF_REMOTE_VECTOR_WEIGHT` — a measured number, carried by the embedder
+   * rather than assumed by the fusion.
+   */
+  recommendedWeight(): number {
+    return RRF_REMOTE_VECTOR_WEIGHT;
   }
 
   model(): string {

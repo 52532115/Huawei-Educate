@@ -130,7 +130,7 @@ export class AgentToolRegistry {
       case 'get_learner_profile':
         return Promise.resolve(this.toolGetLearnerProfile());
       case 'search_course_knowledge':
-        return Promise.resolve(this.toolSearchCourseKnowledge(argsJson));
+        return this.toolSearchCourseKnowledge(argsJson);
       default: {
         const errorResult = new ToolErrorResult();
         errorResult.error = `未知工具：${name}`;
@@ -238,8 +238,14 @@ export class AgentToolRegistry {
    * rather than an empty list. That phrasing is the point: it tells the model
    * to say so instead of inventing a passage, which is the same "no data, no
    * fiction" contract the learning-data tools already follow.
+   *
+   * `searchBest` is the hybrid retriever, so this returns the fused ranking
+   * whenever a dense side is available and the lexical one otherwise. Awaiting
+   * it costs nothing when there is no embedder configured — the promise settles
+   * without a request — and the failure path is silent by construction, so a
+   * broken embedder can never turn into a failed tool call.
    */
-  private toolSearchCourseKnowledge(argsJson: string): string {
+  private async toolSearchCourseKnowledge(argsJson: string): Promise<string> {
     const query = parseToolQuery(argsJson);
     if (query.length === 0) {
       const errorResult = new ToolErrorResult();
@@ -247,7 +253,7 @@ export class AgentToolRegistry {
       return JSON.stringify(errorResult);
     }
 
-    const hits = this.knowledgeStore.search(query);
+    const hits = await this.knowledgeStore.searchBest(query);
     const passages: KnowledgePassage[] = [];
     for (let i = 0; i < hits.length; i++) {
       const hit: KnowledgeHit = hits[i];

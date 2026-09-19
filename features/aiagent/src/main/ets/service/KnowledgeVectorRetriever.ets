@@ -17,9 +17,9 @@ import { cosineSimilarity } from './KnowledgeEmbedding';
 export const RRF_RANK_CONSTANT = 60;
 
 /**
- * Weight of the dense list inside the fusion.
+ * Weight of the dense list inside the fusion when the caller does not say.
  *
- * Kept as a knob rather than hardcoded because the shipped dense side is a
+ * Kept as a knob rather than hardcoded because the offline dense side is a
  * hashed stand-in, and a measurement on the labelled set showed that trusting
  * it as an equal partner *lowers* Recall@3 — it has no semantic power, so its
  * disagreements with BM25 are mostly noise. Down-weighting it lets the dense
@@ -27,6 +27,26 @@ export const RRF_RANK_CONSTANT = 60;
  * confident lexical hit.
  */
 export const RRF_DEFAULT_VECTOR_WEIGHT = 0.35;
+
+/**
+ * Weight for a dense list that came from a real embedding model.
+ *
+ * Equal weight, and that number is a measurement rather than a preference. On
+ * the shipped corpus with a real 1024-dim model (see
+ * `_test_artifacts/_eval_real_embedding.cjs`), sweeping the weight gave
+ *
+ * | weight | Recall@3 | MRR    | paraphrase |
+ * |--------|----------|--------|------------|
+ * | 0      | 0.8485   | 0.7273 | 0.7500     |  ← BM25 alone
+ * | 0.35   | 0.9091   | 0.8636 | 0.8333     |  ← what the stand-in wants
+ * | 1      | 0.9697   | 0.9545 | 1.0000     |  ← best
+ *
+ * so down-weighting a *semantic* retriever throws away exactly the property
+ * that makes it worth its cost. The stand-in's 0.35 is not a guess that the
+ * real model inherits; the two are different retrievers and get different
+ * numbers. Whichever embedder installs the vectors declares its own.
+ */
+export const RRF_REMOTE_VECTOR_WEIGHT = 1;
 
 /** Provenance labels, mirrored on `KnowledgeHit.retriever`. */
 export const RETRIEVER_BM25 = 'bm25';

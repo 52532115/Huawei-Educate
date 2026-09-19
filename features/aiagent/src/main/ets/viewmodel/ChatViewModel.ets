@@ -315,12 +315,15 @@ export class ChatViewModel {
    *   - no hits → the turn degrades to ordinary chat, because an ungrounded
    *               answer is better than a fabricated citation.
    *
-   * Either way no tool loop is involved, so this costs exactly one API call —
-   * the local search is a few milliseconds, which keeps the first token well
-   * inside the latency budget.
+   * Either way no tool loop is involved, so this costs exactly one API call.
+   * `searchBest` is the hybrid retriever: it returns the fused ranking when a
+   * dense side is already in place, and plain lexical results otherwise —
+   * starting the dense build in the background on the way. So even the worst
+   * case stays local, and the first question after a cold start is answered at
+   * lexical speed rather than waiting on the embedder.
    */
   private async runKnowledgeChat(userText: string, aiMessage: ChatMessage): Promise<void> {
-    const hits: KnowledgeHit[] = this.knowledgeStore.search(userText);
+    const hits: KnowledgeHit[] = await this.knowledgeStore.searchBest(userText);
     if (hits.length === 0) {
       // Deliberately not shown to the user: "found nothing" is an internal
       // detail, and the reply they get is a normal, useful answer.
