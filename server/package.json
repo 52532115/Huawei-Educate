@@ -1,0 +1,14 @@
+{
+  "name": "safeta-ai-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SafeTAcademy AI 后端代理：持有厂商密钥，客户端零密钥（补 AI-SEC-001 的后端代理那一半）",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  }
+}

@@ -31,7 +31,16 @@ function loadArkTs(relativePath, prelude = '') {
 }
 
 // ---------- AiService.handleSseChunk ----------
+// The real AiBackend rather than a stand-in: it is what decides whether the app
+// attaches a vendor key or its own session token, so those rules should be
+// exercised as shipped.
+global.__aiBackendModule = loadArkTs(
+  'features/aiagent/src/main/ets/service/AiBackend.ets',
+  `const fileIo = { readTextSync() { return ''; }, openSync() { return { fd: 1 }; }, writeSync() {}, closeSync() {} };`,
+);
+
 const aiPrelude = `
+const AiBackend = global.__aiBackendModule.AiBackend;
 class AiResponseResult { constructor() { this.content = ''; this.toolCalls = []; } }
 class AiToolCall { constructor() { this.id = ''; this.type = 'function'; this.function = new AiToolCallFunction(); } }
 class AiToolCallFunction { constructor() { this.name = ''; this.arguments = ''; } }

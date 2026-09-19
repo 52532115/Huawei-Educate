@@ -77,7 +77,15 @@ check('APIKey', 'clearKey后为空', ks2.getKey() === '' && ks2.isConfigured() =
 
 // ---------- Part 2: AiService — missing key + retries ----------
 global.aiKeyValue = 'sk-test';
+// The real AiBackend, not a stand-in: it is the only thing that decides whether
+// a vendor key or the app's own session token is attached, so the routing rules
+// should be exercised exactly as they ship.
+global.__aiBackendModule = loadArkTs(
+  'features/aiagent/src/main/ets/service/AiBackend.ets',
+  `const Logger = { error() {}, info() {}, warn() {} };`,
+);
 const aiPrelude = `
+const AiBackend = global.__aiBackendModule.AiBackend;
 const util = { TextDecoder: { create() { return { decodeToString(u8) { return Buffer.from(u8).toString('utf8'); } }; } } };
 const Logger = { error() {}, info() {} };
 const AiConstants = { AI_API_URL: 'https://api.test/v1/chat/completions', AI_MODEL: 'm', REQUEST_TIMEOUT: 1000, MAX_RETRY_COUNT: 3 };
@@ -98,6 +106,8 @@ global.httpStub = {
   failCount: 0,
   attempts: 0,
   responseCode: 200,
+  lastUrl: '',
+  lastHeaders: {},
   successBody: '{"choices":[{"message":{"content":"你好"}}]}',
   RequestMethod: { POST: 'POST' },
   HttpDataType: { STRING: 'string' },
@@ -107,6 +117,8 @@ global.httpStub = {
       destroy() { this.destroyed = true; },
       async request(url, opts) {
         global.httpStub.attempts += 1;
+        global.httpStub.lastUrl = url;
+        global.httpStub.lastHeaders = (opts && opts.header) ? opts.header : {};
         await Promise.resolve();
         if (global.httpStub.failCount > 0) {
           global.httpStub.failCount -= 1;
@@ -175,6 +187,244 @@ const aiMod = loadArkTs(
   await p;
   await sleep(500); // if cancellation were ignored, more attempts would fire
   check('重试', '取消后中止重试', cancelMsg === 'Request cancelled' && global.httpStub.attempts === attemptsAtCancel, { msg: cancelMsg, attempts: global.httpStub.attempts, atCancel: attemptsAtCancel }, 'no further attempts');
+
+  // ---------- Part 3: backend mode — the app carries no vendor key ----------
+  const { AiBackend, AiBackendStore } = global.__aiBackendModule;
+
+  global.aiKeyValue = 'sk-vendor-key-should-not-leave-the-device';
+  global.httpStub.responseCode = 200;
+  global.httpStub.failCount = 0;
+
+  const noBackend = new AiBackend('', '');
+  const withBackend = new AiBackend('https://ai.example.edu/', 'app-session-token');
+
+  check('后端', 'AiBackend 去掉末尾斜杠并按路径拼接',
+    withBackend.getBaseUrl() === 'https://ai.example.edu' &&
+    withBackend.chatUrl() === 'https://ai.example.edu/v1/chat/completions' &&
+    withBackend.embedUrl() === 'https://ai.example.edu/embed',
+    { base: withBackend.getBaseUrl(), chat: withBackend.chatUrl(), embed: withBackend.embedUrl() },
+    'normalized base + two paths');
+
+  check('后端', '模式只由 baseUrl 决定，令牌不参与判断',
+    noBackend.mode() === 'direct' && noBackend.usesBackend() === false &&
+    withBackend.mode() === 'backend' && withBackend.usesBackend() === true &&
+    new AiBackend('', 'orphan-token').mode() === 'direct',
+    { none: noBackend.mode(), some: withBackend.mode(), orphan: new AiBackend('', 't').mode() },
+    'direct / backend / direct');
+
+  check('后端', 'authHeader 无令牌时为空串（不发一个空的 Bearer）',
+    noBackend.authHeader() === '' && withBackend.authHeader() === 'Bearer app-session-token',
+    { none: noBackend.authHeader(), some: withBackend.authHeader() }, 'empty / Bearer token');
+
+  // --- direct mode must behave exactly as before ---
+  const aiDirect = new aiMod.AiService(5000, 10, new AiBackend('', ''));
+  await aiDirect.chat([{ role: 'user', content: 'hi' }]);
+  check('后端', '直连模式：打到厂商地址，带用户填的 API Key',
+    global.httpStub.lastUrl === 'https://api.test/v1/chat/completions' &&
+    global.httpStub.lastHeaders['Authorization'] === 'Bearer sk-vendor-key-should-not-leave-the-device',
+    { url: global.httpStub.lastUrl, auth: global.httpStub.lastHeaders['Authorization'] },
+    'vendor url + vendor key');
+
+  // --- backend mode: right endpoint, right credential, no vendor key ---
+  const aiBackend = new aiMod.AiService(5000, 10, withBackend);
+  await aiBackend.chat([{ role: 'user', content: 'hi' }]);
+  check('后端', '后端模式：打到后端地址、只带应用令牌，绝不带厂商 Key',
+    global.httpStub.lastUrl === 'https://ai.example.edu/v1/chat/completions' &&
+    global.httpStub.lastHeaders['Authorization'] === 'Bearer app-session-token' &&
+    JSON.stringify(global.httpStub.lastHeaders).indexOf('sk-vendor-key') < 0,
+    { url: global.httpStub.lastUrl, auth: global.httpStub.lastHeaders['Authorization'] },
+    'backend url + app token only');
+
+  check('后端', 'getMode 报告当前模式', aiBackend.getMode() === 'backend' && aiDirect.getMode() === 'direct',
+    { backend: aiBackend.getMode(), direct: aiDirect.getMode() }, 'backend / direct');
+
+  // --- the point of the whole exercise: no key required in backend mode ---
+  global.aiKeyValue = '';
+  const aiBackendNoKey = new aiMod.AiService(5000, 10, new AiBackend('https://ai.example.edu', ''));
+  let backendErr = '';
+  try {
+    await aiBackendNoKey.chat([{ role: 'user', content: 'hi' }]);
+  } catch (e) {
+    backendErr = e.message;
+  }
+  check('后端', '后端模式下未配 Key 也不报缺 Key（厂商密钥在服务端）',
+    backendErr === '' && global.httpStub.lastUrl === 'https://ai.example.edu/v1/chat/completions',
+    { err: backendErr, url: global.httpStub.lastUrl }, 'no ApiKeyMissingError');
+
+  check('后端', '后端模式无令牌时不发 Authorization 头',
+    global.httpStub.lastHeaders['Authorization'] === undefined,
+    global.httpStub.lastHeaders, 'no Authorization header');
+
+  let stillMissing = '';
+  try {
+    await new aiMod.AiService(5000, 10, new AiBackend('', '')).chat([{ role: 'user', content: 'hi' }]);
+  } catch (e) {
+    stillMissing = e.message;
+  }
+  check('后端', '直连模式未配 Key 仍报原友好错误（行为不变）',
+    stillMissing.indexOf('尚未配置 API Key') >= 0, stillMissing, 'friendly hint');
+
+  // --- the default constructor path reads the setting from AppStorage ---
+  global.AppStorage.data.set('aiBackendUrl', 'https://from-appstorage.example/');
+  global.AppStorage.data.set('aiBackendToken', 'tok-from-appstorage');
+  const fromStorage = AiBackend.fromAppStorage();
+  const defaultConstructed = new aiMod.AiService(5000, 10);
+  check('后端', 'fromAppStorage 读到地址与令牌，AiService 默认构造即采用它',
+    fromStorage.getBaseUrl() === 'https://from-appstorage.example' &&
+    fromStorage.getToken() === 'tok-from-appstorage' &&
+    defaultConstructed.getMode() === 'backend',
+    { url: fromStorage.getBaseUrl(), mode: defaultConstructed.getMode() },
+    'read from AppStorage and used by default');
+  global.AppStorage.data.delete('aiBackendUrl');
+  global.AppStorage.data.delete('aiBackendToken');
+
+  // A settings change must take effect on the next request, not the next
+  // session. The sheet lives on the chat page, so a change that only applied
+  // after leaving and re-entering would look like it did nothing at all.
+  const liveService = new aiMod.AiService(5000, 10);
+  const modeBeforeSwitch = liveService.getMode();
+  global.AppStorage.data.set('aiBackendUrl', 'https://switched.example');
+  global.AppStorage.data.set('aiBackendToken', 'tok-switched');
+  const modeAfterSwitch = liveService.getMode();
+  global.aiKeyValue = 'sk-vendor-key-should-not-leave-the-device';
+  global.httpStub.responseCode = 200;
+  global.httpStub.failCount = 0;
+  await liveService.chat([{ role: 'user', content: 'hi' }]);
+  check('后端', '改设置后无需重建服务：同一实例的下一次请求即走新地址、带新令牌',
+    modeBeforeSwitch === 'direct' && modeAfterSwitch === 'backend' &&
+    global.httpStub.lastUrl === 'https://switched.example/v1/chat/completions' &&
+    global.httpStub.lastHeaders['Authorization'] === 'Bearer tok-switched',
+    { before: modeBeforeSwitch, after: modeAfterSwitch, url: global.httpStub.lastUrl,
+      auth: global.httpStub.lastHeaders['Authorization'] },
+    'direct → backend without reconstruction');
+  global.AppStorage.data.delete('aiBackendUrl');
+  global.AppStorage.data.delete('aiBackendToken');
+
+  // ---------- Part 4: status codes are explained, not blindly retried ----------
+  global.aiKeyValue = 'sk-test';
+
+  check('错误码', 'isRetryableStatus：只有 408/429/5xx 算瞬态',
+    aiMod.isRetryableStatus(408) === true && aiMod.isRetryableStatus(429) === true &&
+    aiMod.isRetryableStatus(500) === true && aiMod.isRetryableStatus(503) === true &&
+    aiMod.isRetryableStatus(400) === false && aiMod.isRetryableStatus(401) === false &&
+    aiMod.isRetryableStatus(402) === false && aiMod.isRetryableStatus(403) === false &&
+    aiMod.isRetryableStatus(404) === false && aiMod.isRetryableStatus(422) === false,
+    'classification', 'only transient statuses');
+
+  check('错误码', 'friendlyApiMessage：已知状态码都有可读文案，且不再露出裸状态码',
+    (() => {
+      const known = [0, 400, 401, 402, 403, 404, 408, 429, 500, 502, 503, 504];
+      for (const c of known) {
+        const text = aiMod.friendlyApiMessage(c);
+        if (typeof text !== 'string' || text.length === 0) {
+          return false;
+        }
+        if (c !== 0 && text.indexOf(String(c)) >= 0) {
+          return false;
+        }
+      }
+      return aiMod.friendlyApiMessage(402).indexOf('余额') >= 0 &&
+        aiMod.friendlyApiMessage(429).indexOf('频繁') >= 0 &&
+        aiMod.friendlyApiMessage(401).indexOf('鉴权') >= 0;
+    })(), { 402: aiMod.friendlyApiMessage(402), 429: aiMod.friendlyApiMessage(429) },
+    'friendly for every known code');
+
+  // --- the regression this whole section exists for: 402 must stop at once ---
+  global.httpStub.responseCode = 402;
+  global.httpStub.attempts = 0;
+  let code402 = -1;
+  let msg402 = '';
+  try {
+    await new aiMod.AiService(5000, 10, new AiBackend('', '')).chat([{ role: 'user', content: 'hi' }]);
+  } catch (e) {
+    code402 = e.code;
+    msg402 = e.message;
+  }
+  check('错误码', '402 立即停止：只请求 1 次（此前会空转 4 次、白等 3.6 秒）',
+    global.httpStub.attempts === 1 && code402 === 402 && msg402.indexOf('余额') >= 0,
+    { attempts: global.httpStub.attempts, code: code402, msg: msg402 }, '1 attempt, code 402');
+
+  global.httpStub.responseCode = 401;
+  global.httpStub.attempts = 0;
+  let code401 = -1;
+  try {
+    await new aiMod.AiService(5000, 10, new AiBackend('', '')).chat([{ role: 'user', content: 'hi' }]);
+  } catch (e) {
+    code401 = e.code;
+  }
+  check('错误码', '401 立即停止：只请求 1 次',
+    global.httpStub.attempts === 1 && code401 === 401,
+    { attempts: global.httpStub.attempts, code: code401 }, '1 attempt');
+
+  global.httpStub.responseCode = 400;
+  global.httpStub.attempts = 0;
+  let code400 = -1;
+  try {
+    await new aiMod.AiService(5000, 10, new AiBackend('', '')).chat([{ role: 'user', content: 'hi' }]);
+  } catch (e) {
+    code400 = e.code;
+  }
+  check('错误码', '400 立即停止：只请求 1 次',
+    global.httpStub.attempts === 1 && code400 === 400,
+    { attempts: global.httpStub.attempts, code: code400 }, '1 attempt');
+
+  global.httpStub.responseCode = 429;
+  global.httpStub.attempts = 0;
+  let code429 = -1;
+  try {
+    await new aiMod.AiService(5000, 10, new AiBackend('', '')).chat([{ role: 'user', content: 'hi' }]);
+  } catch (e) {
+    code429 = e.code;
+  }
+  check('错误码', '429 属瞬态：仍重试到 MAX+1 次',
+    global.httpStub.attempts === 4 && code429 === 429,
+    { attempts: global.httpStub.attempts, code: code429 }, '4 attempts');
+
+  global.httpStub.responseCode = 500;
+  global.httpStub.attempts = 0;
+  let code500 = -1;
+  try {
+    await new aiMod.AiService(5000, 10, new AiBackend('', '')).chat([{ role: 'user', content: 'hi' }]);
+  } catch (e) {
+    code500 = e.code;
+  }
+  check('错误码', '5xx 属瞬态：仍重试到 MAX+1 次',
+    global.httpStub.attempts === 4 && code500 === 500,
+    { attempts: global.httpStub.attempts, code: code500 }, '4 attempts');
+  global.httpStub.responseCode = 200;
+
+  // ---------- Part 5: backend settings persist like the key does ----------
+  global.AppStorage.data.clear();
+  global.AppStorage.data.set('filesDir', '/tmp/p4test');
+  fileMap.clear();
+  const store = new AiBackendStore();
+  check('后端设置', '初始为未配置', store.isConfigured() === false, store.isConfigured(), false);
+
+  store.save(new AiBackend('https://ai.example.edu/', 'tok-1'));
+  const loadedBackend = store.load();
+  check('后端设置', '保存后规范化并读回',
+    loadedBackend.getBaseUrl() === 'https://ai.example.edu' && loadedBackend.getToken() === 'tok-1',
+    { url: loadedBackend.getBaseUrl(), token: loadedBackend.getToken() }, 'normalized url + token');
+
+  global.AppStorage.data.clear(); // simulate a restart: only the file remains
+  global.AppStorage.data.set('filesDir', '/tmp/p4test');
+  const afterRestart = new AiBackendStore().load();
+  check('后端设置', '重启后从文件恢复（两行：地址 + 令牌）',
+    afterRestart.getBaseUrl() === 'https://ai.example.edu' && afterRestart.getToken() === 'tok-1',
+    { url: afterRestart.getBaseUrl(), token: afterRestart.getToken() }, 'restored from file');
+
+  check('后端设置', 'parse：只有一行时令牌为空、地址完整',
+    (() => {
+      const only = new AiBackendStore().parse('https://a.example');
+      return only.getBaseUrl() === 'https://a.example' && only.getToken() === '';
+    })(), 'single line', 'url only');
+
+  check('后端设置', 'parse：空串不产生配置',
+    new AiBackendStore().parse('').isConfigured() === false, 'empty', false);
+
+  new AiBackendStore().clear();
+  check('后端设置', 'clear 后回到未配置且不抛异常',
+    new AiBackendStore().isConfigured() === false, new AiBackendStore().isConfigured(), false);
 
   report();
 })();

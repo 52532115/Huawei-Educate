@@ -19,3 +19,11 @@ _test_artifacts/*.log
 
 # WorkBuddy 的本地工作记忆(工程笔记,非项目交付物)
 /.workbuddy/
+
+# 服务端本地配置。.env 里是厂商密钥,一旦入库就等于泄露,必须永远忽略。
+# (server 本身零依赖,正常不会有 node_modules;留着是防止有人手滑装了包。)
+server/.env
+server/.env.*
+!server/.env.example
+server/node_modules
+server/*.log

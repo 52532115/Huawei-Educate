@@ -23,7 +23,7 @@ import {
   ErrorQuestionItem,
 } from './ChatModels';
 import { KnowledgeHit } from './KnowledgeModels';
-import { AiService, ApiKeyMissingError } from '../service/AiService';
+import { AiService, ApiKeyMissingError, ApiHttpError } from '../service/AiService';
 import { AgentService, AgentLimitError, AgentTimeoutError } from '../service/AgentService';
 import { SessionStore } from '../service/SessionStore';
 import { DataCollectService } from '../service/DataCollectService';
@@ -862,14 +862,18 @@ export class ChatViewModel {
   }
 
   /**
-   * Maps agent failures to user-facing text. AgentLimitError and
-   * AgentTimeoutError keep their own messages; anything else shows a generic
-   * hint plus the raw error detail (temporarily, to ease debugging — remove
-   * the detail for release).
+   * Maps agent failures to user-facing text.
+   *
+   * Every error that already carries a sentence for the learner keeps it:
+   * AgentLimitError, AgentTimeoutError, ApiKeyMissingError, and ApiHttpError —
+   * the last of which turns a status code into something actionable (an invalid
+   * key, an exhausted balance, a rate limit, an outage). Anything unrecognised
+   * still shows the raw detail, which is a debugging aid rather than a message
+   * and should be removed before release.
    */
   private buildErrorMessage(err: Object): string {
     if (err instanceof AgentLimitError || err instanceof AgentTimeoutError ||
-      err instanceof ApiKeyMissingError) {
+      err instanceof ApiKeyMissingError || err instanceof ApiHttpError) {
       return (err as Error).message;
     }
     const errMsg = err instanceof Error ? err.message : 'Unknown error';

@@ -17,6 +17,7 @@ import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { AiConstants } from '../utils/AiConstants';
 import { ApiKeyStore } from './ApiKeyStore';
+import { AiBackend } from './AiBackend';
 import { AiMessage, AiApiRequest, AiToolCall, AiResponseResult, ApiToolSchema } from '../viewmodel/ChatModels';
 import { Logger } from '@safe/basic';
 
@@ -32,6 +33,74 @@ export class ApiKeyMissingError extends Error {
     super('尚未配置 API Key。请点击聊天页右上角 ⚙️，填写 API Key 后重试。');
   }
 }
+
+/**
+ * A non-200 answer from whichever endpoint was called.
+ *
+ * The status is kept as a field instead of being baked into the text because
+ * one answer needs two different readings: the learner needs a sentence they
+ * can act on, and the log needs the number. Gluing them together is what put
+ * the string `AI API request failed with code 402` in front of a student, who
+ * could only respond by asking a human what it meant.
+ *
+ * The same wording covers both modes on purpose — with a backend configured the
+ * rejection comes from the team's server, without one it comes straight from the
+ * vendor, but the learner's situation is identical either way.
+ */
+export class ApiHttpError extends Error {
+  code: number;
+
+  constructor(code: number) {
+    super(friendlyApiMessage(code));
+    this.code = code;
+  }
+}
+
+/**
+ * Statuses a second attempt could plausibly answer differently.
+ *
+ * Everything else is a statement about the request or the account, and asking
+ * again only spends the caller's time to receive the same refusal. That is not
+ * hypothetical: the retry loop used to re-send a 402 four times over 3.6
+ * seconds, which is the opposite of what DeepSeek's own troubleshooting page
+ * says to do with it.
+ */
+export function isRetryableStatus(code: number): boolean {
+  if (code === 408 || code === 429) {
+    return true;
+  }
+  return code >= 500;
+}
+
+/** The sentence a learner sees. Never a bare status code. */
+export function friendlyApiMessage(code: number): string {
+  if (code === 0) {
+    return '网络连接失败，请检查网络后重试。';
+  }
+  if (code === 400) {
+    return '请求格式有误，请换一种问法再试。';
+  }
+  if (code === 401 || code === 403) {
+    return '鉴权失败：API Key 或后端应用令牌无效。请点击聊天页右上角 ⚙️ 检查配置。';
+  }
+  if (code === 402) {
+    return 'AI 服务账户余额不足，请联系管理员充值后再试。';
+  }
+  if (code === 404) {
+    return '接口地址不存在，请检查后端地址或 API 地址是否填写正确。';
+  }
+  if (code === 408) {
+    return 'AI 服务响应超时，请稍后再试。';
+  }
+  if (code === 429) {
+    return '请求过于频繁，请稍等一会儿再试。';
+  }
+  if (code >= 500) {
+    return 'AI 服务暂时不可用，请稍后再试。';
+  }
+  return `AI 服务返回了错误（${code}），请稍后再试。`;
+}
+
 
 /** Outcome of a tier-1 (requestInStream) streaming attempt. */
 class StreamOutcome {
@@ -54,6 +123,17 @@ export class AiService {
   private isCancelled: boolean = false;
   private httpRequest: http.HttpRequest | null = null;
   private keyStore: ApiKeyStore = new ApiKeyStore();
+  /**
+   * Decides which endpoint is called and which credential goes with it.
+   *
+   * Resolved per request rather than once per instance, unless a caller
+   * injected one explicitly. This mirrors how the direct-mode key already
+   * behaves — ApiKeyStore reads storage on every `getKey()` — and it matters
+   * for the same reason: a learner who switches modes in the settings sheet
+   * should not have to leave the chat page and come back before the switch
+   * takes effect.
+   */
+  private injectedBackend: AiBackend | null = null;
   /** Carries the tail of a split SSE line across dataReceive callbacks. */
   private sseBuffer: string = '';
   /** Watchdog duration, overridable for tests. */
@@ -61,13 +141,58 @@ export class AiService {
   /** Retry backoff base, overridable for tests. */
   private retryBaseDelayMs: number;
 
-  constructor(streamEventTimeoutMs: number = STREAM_EVENT_TIMEOUT_MS, retryBaseDelayMs: number = RETRY_BASE_DELAY_MS) {
+  constructor(
+    streamEventTimeoutMs: number = STREAM_EVENT_TIMEOUT_MS,
+    retryBaseDelayMs: number = RETRY_BASE_DELAY_MS,
+    backend: AiBackend | null = null,
+  ) {
     this.streamEventTimeoutMs = streamEventTimeoutMs;
     this.retryBaseDelayMs = retryBaseDelayMs;
+    this.injectedBackend = backend;
   }
 
-  /** Fails fast with a friendly error when the user has not configured a key. */
+  /**
+   * The backend in force right now: the injected one when a caller supplied it
+   * (tests, and any caller that wants to pin a mode), otherwise whatever is
+   * currently configured.
+   */
+  private currentBackend(): AiBackend {
+    if (this.injectedBackend !== null) {
+      return this.injectedBackend;
+    }
+    return AiBackend.fromAppStorage();
+  }
+
+  /**
+   * Where this call goes.
+   *
+   * With a backend configured the app never contacts a vendor, so a shipped
+   * build contains no vendor endpoint at all and changing model or provider
+   * becomes a server-side change. Without one it falls back to the direct
+   * endpoint the app has always used.
+   */
+  private requestUrl(): string {
+    const backend = this.currentBackend();
+    return backend.isConfigured() ? backend.chatUrl() : AiConstants.AI_API_URL;
+  }
+
+  /** Which mode this instance runs in; for diagnostics and tests. */
+  getMode(): string {
+    return this.currentBackend().mode();
+  }
+
+  /**
+   * Fails fast with a friendly error when the app has no way to authenticate.
+   *
+   * In backend mode there is nothing for the user to configure here: the keys
+   * live on the server and the app's own session token is optional, so a missing
+   * key is not a failure. Demanding one would make backend mode unusable, and
+   * would be asking a learner for a vendor credential they should never need.
+   */
   private ensureKeyConfigured(): void {
+    if (this.currentBackend().isConfigured()) {
+      return;
+    }
     if (!this.keyStore.isConfigured()) {
       throw new ApiKeyMissingError();
     }
@@ -90,22 +215,21 @@ export class AiService {
       body.tools = tools;
     }
 
+    // doRequest only resolves on a 200 — every other answer has already been
+    // turned into an ApiHttpError by the time it returns or throws, so there is
+    // no failure branch to write here.
     const response = await this.doRequest(body);
-    if (response.responseCode === RESPONSE_CODE_OK) {
-      const parsed = JSON.parse(response.result as string) as Record<string, Object>;
-      const choices = parsed['choices'] as Array<Record<string, Object>>;
-      if (choices && choices.length > 0) {
-        const messageObj = choices[0]['message'] as Record<string, Object>;
-        result.content = (messageObj['content'] as string) || '';
-        const rawCalls = messageObj['tool_calls'] as Array<Record<string, Object>>;
-        if (rawCalls) {
-          result.toolCalls = this.parseToolCalls(rawCalls);
-        }
+    const parsed = JSON.parse(response.result as string) as Record<string, Object>;
+    const choices = parsed['choices'] as Array<Record<string, Object>>;
+    if (choices && choices.length > 0) {
+      const messageObj = choices[0]['message'] as Record<string, Object>;
+      result.content = (messageObj['content'] as string) || '';
+      const rawCalls = messageObj['tool_calls'] as Array<Record<string, Object>>;
+      if (rawCalls) {
+        result.toolCalls = this.parseToolCalls(rawCalls);
       }
-      Logger.info(`[AiService] chat: ${result.toolCalls.length} tool calls, ${result.content.length} content chars`);
-    } else {
-      this.throwApiError(response);
     }
+    Logger.info(`[AiService] chat: ${result.toolCalls.length} tool calls, ${result.content.length} content chars`);
     return result;
   }
 
@@ -199,7 +323,7 @@ export class AiService {
 
     try {
       const responseCode = await request.requestInStream(
-        AiConstants.AI_API_URL,
+        this.requestUrl(),
         {
           method: http.RequestMethod.POST,
           header: this.buildHeaders(),
@@ -212,7 +336,7 @@ export class AiService {
         return new StreamOutcome(0, false);
       }
       if (responseCode !== RESPONSE_CODE_OK) {
-        throw new Error(`AI API request failed with code ${responseCode}`);
+        throw new ApiHttpError(responseCode);
       }
 
       await Promise.race([done, cancelled]);
@@ -237,6 +361,11 @@ export class AiService {
       }
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       Logger.error(`AI stream error: ${errMsg}`);
+      // Re-throw the original when there is one: wrapping it in a fresh Error
+      // would drop the status code the UI needs in order to explain the failure.
+      if (error instanceof Error) {
+        throw error;
+      }
       throw new Error(errMsg);
     } finally {
       if (watchdog >= 0) {
@@ -281,7 +410,7 @@ export class AiService {
 
     try {
       const response = await request.request(
-        AiConstants.AI_API_URL,
+        this.requestUrl(),
         {
           method: http.RequestMethod.POST,
           header: this.buildHeaders(),
@@ -295,7 +424,8 @@ export class AiService {
         return charCount;
       }
       if (response.responseCode !== RESPONSE_CODE_OK) {
-        this.throwApiError(response);
+        Logger.error(`AI API error: ${response.responseCode}, body: ${response.result as string}`);
+        throw new ApiHttpError(response.responseCode);
       }
 
       // Some HarmonyOS http configurations never fire dataReceive; in that
@@ -325,6 +455,9 @@ export class AiService {
       }
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       Logger.error(`AI stream error: ${errMsg}`);
+      if (error instanceof Error) {
+        throw error;
+      }
       throw new Error(errMsg);
     } finally {
       request.off('dataReceive');
@@ -397,11 +530,30 @@ export class AiService {
     return body;
   }
 
+  /**
+   * The credential this request may carry — and never more than one.
+   *
+   * Which one is not a style choice. In backend mode the vendor key is not
+   * present on the device at all, and sending it would leak a credential the
+   * user never handed to this app; in direct mode the app has no backend token
+   * to send. So the mode selects the header, and an absent credential means the
+   * header is omitted entirely rather than sent as an empty `Bearer `.
+   */
   private buildHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${this.keyStore.getKey()}`,
-    };
+    const headers: Record<string, string> = {};
+    headers['Content-Type'] = 'application/json';
+    const backend = this.currentBackend();
+    if (backend.isConfigured()) {
+      const token = backend.getToken();
+      if (token.length > 0) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      return headers;
+    }
+    const key = this.keyStore.getKey();
+    if (key.length > 0) {
+      headers['Authorization'] = `Bearer ${key}`;
+    }
     return headers;
   }
 
@@ -413,11 +565,22 @@ export class AiService {
   }
 
   /**
-   * Non-streaming request with retries (MAX_RETRY_COUNT attempts, linear
-   * backoff). Cancellation aborts immediately — no retry, no new request.
+   * Non-streaming request with retries.
+   *
+   * Only transient failures are retried — transport errors, 408/429/5xx. A 4xx
+   * is a statement about the request or the account, so it ends the loop on the
+   * first answer: re-sending a 402 four times over 3.6 seconds, as this loop
+   * used to, only delays the explanation the user is waiting for. Cancellation
+   * aborts immediately — no retry, no new request.
    */
   private async doRequest(body: AiApiRequest): Promise<http.HttpResponse> {
-    let lastError: Error = new Error('AI Service error');
+    // ArkTS forbids assigning a class instance to a variable typed as the
+    // built-in `Error` (structural typing is not supported), so the HTTP
+    // failure and the transport failure live in separate slots instead of
+    // sharing one `Error`-typed variable.
+    let lastFailure: ApiHttpError | null = null;
+    let terminalFailure: ApiHttpError | null = null;
+    let lastMessage: string = 'AI Service error';
     for (let attempt = 0; attempt <= AiConstants.MAX_RETRY_COUNT; attempt++) {
       if (this.isCancelled) {
         throw new Error('Request cancelled');
@@ -432,7 +595,7 @@ export class AiService {
       const request = this.createRequest();
       try {
         const response = await request.request(
-          AiConstants.AI_API_URL,
+          this.requestUrl(),
           {
             method: http.RequestMethod.POST,
             header: this.buildHeaders(),
@@ -448,21 +611,36 @@ export class AiService {
         if (response.responseCode === RESPONSE_CODE_OK) {
           return response;
         }
-        // A transport-level answer is not retried; surface it immediately.
-        throw new Error(`AI API request failed with code ${response.responseCode}`);
+        Logger.error(`AI API error: ${response.responseCode}, body: ${response.result as string}`);
+        const failure = new ApiHttpError(response.responseCode);
+        if (!isRetryableStatus(response.responseCode)) {
+          // Leave the loop rather than throwing from inside `try` — the catch
+          // below would file this away as just another failed attempt, which is
+          // exactly how a hard stop became four retries.
+          terminalFailure = failure;
+          break;
+        }
+        lastFailure = failure;
       } catch (error) {
         if (this.isCancelled) {
           throw new Error('Request cancelled');
         }
         const errMsg = error instanceof Error ? error.message : 'Unknown error';
-        lastError = new Error(errMsg);
+        lastMessage = errMsg;
+        lastFailure = null;
         Logger.error(`AI Service error (attempt ${attempt + 1}/${AiConstants.MAX_RETRY_COUNT + 1}): ${errMsg}`);
       } finally {
         request.destroy();
         this.httpRequest = null;
       }
     }
-    throw lastError;
+    if (terminalFailure !== null) {
+      throw terminalFailure;
+    }
+    if (lastFailure !== null) {
+      throw lastFailure;
+    }
+    throw new Error(lastMessage);
   }
 
   private async sleep(ms: number): Promise<void> {
@@ -471,12 +649,6 @@ export class AiService {
         resolve();
       }, ms);
     });
-  }
-
-  private throwApiError(response: http.HttpResponse): void {
-    const errorBody = response.result as string;
-    Logger.error(`AI API error: ${response.responseCode}, body: ${errorBody}`);
-    throw new Error(`AI API request failed with code ${response.responseCode}`);
   }
 
   private parseToolCalls(rawCalls: Array<Record<string, Object>>): AiToolCall[] {

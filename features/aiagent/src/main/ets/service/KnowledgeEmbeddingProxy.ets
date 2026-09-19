@@ -6,14 +6,16 @@
 
 import { http } from '@kit.NetworkKit';
 import { KnowledgeEmbeddingBatch } from './KnowledgeEmbedding';
+import { AiBackend, BACKEND_EMBED_PATH } from './AiBackend';
 import { Logger } from '@safe/basic';
 
 /**
- * AppStorage key holding the proxy base URL, e.g. `https://api.example.edu/rag`.
- * Set by the same settings surface that holds the chat API key.
+ * How long to wait for the backend before giving up on vectors for this call.
+ *
+ * Retrieval must never hang on an optional side channel: the lexical index is
+ * already good enough on its own, so a slow backend costs a feature rather than
+ * an answer.
  */
-export const EMBEDDING_PROXY_KEY = 'aiEmbeddingProxyUrl';
-export const EMBEDDING_PROXY_PATH = '/embed';
 export const EMBEDDING_PROXY_TIMEOUT_MS = 8000;
 
 const RESPONSE_CODE_OK = 200;
@@ -60,16 +62,14 @@ export class KnowledgeEmbeddingProxy {
    * Separate from the constructor because reading AppStorage is the one impure
    * thing here; keeping it out of construction means the class can be built and
    * tested without any app state.
+   *
+   * There is exactly one place the app's backend lives — `AiBackend` — so the
+   * embedding route shares it rather than keeping a second, parallel setting
+   * that could disagree with the chat route.
    */
   static fromAppStorage(): KnowledgeEmbeddingProxy {
-    let endpoint = '';
-    try {
-      endpoint = AppStorage.get<string>(EMBEDDING_PROXY_KEY) || '';
-    } catch (e) {
-      // AppStorage is absent in unit tests and during preview.
-      endpoint = '';
-    }
-    return new KnowledgeEmbeddingProxy(endpoint);
+    const backend = AiBackend.fromAppStorage();
+    return new KnowledgeEmbeddingProxy(backend.getBaseUrl(), backend.getToken());
   }
 
   private static normalize(endpoint: string): string {
@@ -88,7 +88,7 @@ export class KnowledgeEmbeddingProxy {
   }
 
   url(): string {
-    return this.endpoint + EMBEDDING_PROXY_PATH;
+    return this.endpoint + BACKEND_EMBED_PATH;
   }
 
   private buildHeaders(): Record<string, string> {
@@ -200,4 +200,78 @@ export function parseEmbeddingResponse(raw: string, expectedCount: number): Know
     batch.vectors.push(row);
   }
   return batch;
+}
+
+/**
+ * Provenance for vectors produced by a remote embedder.
+ *
+ * Model and width only. Unlike the local embedder's signature — which has to
+ * pin the tokenizer, because its vectors are a function of it — nothing about
+ * this device belongs here. Folding the local tokenizer hash in would invalidate
+ * every cached remote vector the next time that tokenizer changed, for no
+ * reason: the vectors came from somewhere else and are unaffected.
+ */
+export function remoteEmbedderSignature(model: string, dimension: number): string {
+  if (!Number.isFinite(dimension) || dimension <= 0) {
+    return '';
+  }
+  const name = typeof model === 'string' && model.length > 0 ? model : 'remote';
+  return `remote:${name}:${dimension}`;
+}
+
+/**
+ * Adapts the proxy into the same shape the local embedder offers, so the index
+ * and the snapshot format do not care which one produced a batch.
+ *
+ * Installing vectors is the caller's decision, and this class deliberately does
+ * not make it: a real embedding model is the only thing that can prove it beats
+ * BM25 on this corpus, and the measured answer for the offline stand-in was
+ * "no" — so the proxy path stays available but is never switched on by itself.
+ *
+ * The signature is only knowable after a successful call, so it stays empty
+ * until then. A caller that receives null must therefore keep whatever vectors
+ * it already had: there is nothing new to install and nothing to invalidate.
+ */
+export class KnowledgeProxyEmbedder {
+  private proxy: KnowledgeEmbeddingProxy;
+  private modelName: string = '';
+  private width: number = 0;
+  private currentSignature: string = '';
+
+  constructor(proxy: KnowledgeEmbeddingProxy) {
+    this.proxy = proxy;
+  }
+
+  static fromAppStorage(): KnowledgeProxyEmbedder {
+    return new KnowledgeProxyEmbedder(KnowledgeEmbeddingProxy.fromAppStorage());
+  }
+
+  isConfigured(): boolean {
+    return this.proxy.isConfigured();
+  }
+
+  model(): string {
+    return this.modelName;
+  }
+
+  getDimension(): number {
+    return this.width;
+  }
+
+  /** Empty until a batch has been embedded successfully. */
+  signature(): string {
+    return this.currentSignature;
+  }
+
+  /** Embeds a batch, or null — in which case nothing about this object changes. */
+  async embedBatch(texts: string[]): Promise<KnowledgeEmbeddingBatch | null> {
+    const batch = await this.proxy.embed(texts);
+    if (batch === null) {
+      return null;
+    }
+    this.modelName = batch.model;
+    this.width = batch.dimension;
+    this.currentSignature = remoteEmbedderSignature(batch.model, batch.dimension);
+    return batch;
+  }
 }

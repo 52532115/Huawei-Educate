@@ -79,7 +79,13 @@ function toBuf(s) {
   return buf.buffer;
 }
 
+global.__aiBackendModule = loadArkTs(
+  'features/aiagent/src/main/ets/service/AiBackend.ets',
+  `const fileIo = { readTextSync() { return ''; }, openSync() { return { fd: 1 }; }, writeSync() {}, closeSync() {} };`,
+);
+
 const aiPrelude = `
+const AiBackend = global.__aiBackendModule.AiBackend;
 const util = { TextDecoder: { create() { return { decodeToString(u8) { return Buffer.from(u8).toString('utf8'); } }; } } };
 const Logger = { error() {}, info() {} };
 const AiConstants = { AI_API_URL: 'https://api.test/v1/chat/completions', AI_MODEL: '', REQUEST_TIMEOUT: 1000, MAX_RETRY_COUNT: 3 };
@@ -176,10 +182,18 @@ function makeMessages() {
   global.httpStub.nextResponseCode = 500;
   const ai6 = new aiMod.AiService(5000);
   let errMsg = '';
-  const p6 = ai6.chatStream(makeMessages(), () => {}).catch((e) => { errMsg = e.message; });
+  let errCode = -1;
+  const p6 = ai6.chatStream(makeMessages(), () => {}).catch((e) => { errMsg = e.message; errCode = e.code; });
   await p6;
   global.httpStub.nextResponseCode = 0;
-  check('非200', '抛错且不标记设备broken', errMsg.indexOf('code 500') >= 0 && aiMod.AiService.streamEventsBroken === false, { errMsg, broken: aiMod.AiService.streamEventsBroken }, 'code 500, not broken');
+  // The status now travels as a field instead of inside the text: the learner
+  // gets a sentence they can act on, the log keeps the number. A bare
+  // "failed with code 500" in front of a student was the actual defect.
+  check('非200', '抛错带状态码且文案可读、不标记设备broken',
+    errCode === 500 && errMsg.indexOf('code 500') < 0 && errMsg.indexOf('暂时不可用') >= 0 &&
+    aiMod.AiService.streamEventsBroken === false,
+    { errCode, errMsg, broken: aiMod.AiService.streamEventsBroken },
+    'code=500, friendly text, not broken');
 
   // ---------- C6: empty stream (dataEnd, no data, no watchdog) ----------
   requests.length = 0;

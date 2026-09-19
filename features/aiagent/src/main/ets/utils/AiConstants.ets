@@ -15,11 +15,24 @@
 
 export class AiConstants {
   static readonly AI_API_URL: string = 'https://api.deepseek.com/v1/chat/completions';
-  static readonly AI_MODEL: string = 'deepseek-v4-flash';
+  /**
+   * The direct-path model. Ignored when a backend is configured, because there
+   * the model is chosen server-side — which is the point of having one: swapping
+   * model or provider must not require shipping a new build.
+   *
+   * The previous value, `deepseek-v4-flash`, is a retired model name. Requests
+   * under it still succeed, but DeepSeek routes them to V4.1-Flash regardless;
+   * `deepseek-flash` is the name the vendor documents today.
+   */
+  static readonly AI_MODEL: string = 'deepseek-flash';
   /**
    * The API key is NOT compiled into the app. It is entered by the user at
    * runtime (⚙️ on the chat page) and persisted by ApiKeyStore inside the
    * app sandbox only, so no build artifact ever contains a usable key.
+   *
+   * With a backend configured this key is not used at all: the vendor
+   * credential lives on the server and the app presents only its own session
+   * token. See AiBackend.
    */
   static readonly MAX_HISTORY_MESSAGES: number = 20;
   static readonly REQUEST_TIMEOUT: number = 60000;

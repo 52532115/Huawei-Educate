@@ -23,6 +23,7 @@ import { AnalysisCard } from './AnalysisCard';
 import { RecommendQuestions } from './RecommendQuestions';
 import { AiConstants } from '../utils/AiConstants';
 import { ApiKeyStore } from '../service/ApiKeyStore';
+import { AiBackend, AiBackendStore } from '../service/AiBackend';
 
 @Component
 export struct AiChatView {
@@ -42,6 +43,9 @@ export struct AiChatView {
   @State showSettingsSheet: boolean = false;
   @State apiKeyInput: string = '';
   @State apiKeyConfigured: boolean = false;
+  @State backendUrlInput: string = '';
+  @State backendTokenInput: string = '';
+  @State usingBackend: boolean = false;
   private chatVM: ChatViewModel = new ChatViewModel();
   private analysisVM: AnalysisViewModel = new AnalysisViewModel();
   scroller: Scroller = new Scroller();
@@ -120,6 +124,10 @@ export struct AiChatView {
             .fontSize(16)
             .backgroundColor(Color.Transparent)
             .onClick(() => {
+              const backend = AiBackend.fromAppStorage();
+              this.backendUrlInput = backend.getBaseUrl();
+              this.backendTokenInput = backend.getToken();
+              this.usingBackend = backend.isConfigured();
               this.apiKeyInput = new ApiKeyStore().getKey();
               this.apiKeyConfigured = this.apiKeyInput.length > 0;
               this.showSettingsSheet = true;
@@ -336,83 +344,151 @@ export struct AiChatView {
     .onClick(action);
   }
 
+  /** Saving needs at least one usable way to reach a model. */
+  private canSaveSettings(): boolean {
+    return this.backendUrlInput.trim().length > 0 || this.apiKeyInput.trim().length > 0;
+  }
+
+  private saveSettings(): void {
+    const backend = new AiBackend(this.backendUrlInput, this.backendTokenInput);
+    new AiBackendStore().save(backend);
+    const key = this.apiKeyInput.trim();
+    if (key.length > 0) {
+      new ApiKeyStore().saveKey(key);
+    }
+    this.usingBackend = backend.isConfigured();
+    this.apiKeyConfigured = key.length > 0;
+    this.showSettingsSheet = false;
+    let mode = '直连模式';
+    if (this.usingBackend) {
+      mode = '后端模式';
+    }
+    promptAction.showToast({ message: `AI 配置已保存（${mode}）`, duration: 1500 });
+  }
+
+  /** The indicator shown in the sheet header. */
+  private settingsStatusText(): string {
+    if (this.usingBackend) {
+      return '后端模式 ✓';
+    }
+    return this.apiKeyConfigured ? '直连模式 ✓' : '未配置';
+  }
+
   @Builder
   SettingsSheet() {
-    Column({ space: 16 }) {
-      Row() {
-        Text('AI 设置')
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#1F2937');
-        Blank();
-        Text(this.apiKeyConfigured ? '已配置 ✓' : '未配置')
+    Scroll() {
+      Column({ space: 14 }) {
+        Row() {
+          Text('AI 设置')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#1F2937');
+          Blank();
+          Text(this.settingsStatusText())
+            .fontSize(12)
+            .fontColor(this.usingBackend || this.apiKeyConfigured ? '#10B981' : '#9CA3AF');
+        }
+        .width('100%')
+        .height(36)
+        .padding({ left: 16, right: 16 });
+
+        // The backend comes first because it is the recommended way to run this:
+        // the model key stays on a server the team controls, and the device
+        // never holds a vendor credential at all.
+        Text('后端地址（推荐）\n填写团队部署的 AI 后端，例如 https://ai.example.edu。\n配置后模型 Key 保存在服务端，本机不再需要 API Key。')
           .fontSize(12)
-          .fontColor(this.apiKeyConfigured ? '#10B981' : '#9CA3AF');
-      }
-      .width('100%')
-      .height(40)
-      .padding({ left: 16, right: 16 });
+          .fontColor('#6B7280')
+          .lineHeight(18)
+          .width('90%');
 
-      Text('API Key 仅保存在本机沙箱，不会打包进安装包。\n获取方式:访问 DeepSeek 开放平台 → 创建 API Key。')
-        .fontSize(12)
-        .fontColor('#6B7280')
-        .lineHeight(18)
-        .width('90%');
+        TextInput({ text: this.backendUrlInput, placeholder: 'https://...' })
+          .fontSize(13)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(10)
+          .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+          .width('90%')
+          .onChange((value: string) => {
+            this.backendUrlInput = value;
+          });
 
-      TextInput({ text: this.apiKeyInput, placeholder: 'sk-...' })
-        .fontSize(13)
-        .type(InputType.Password)
-        .showPasswordIcon(true)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(10)
-        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+        TextInput({ text: this.backendTokenInput, placeholder: '应用令牌（后端未启用鉴权可留空）' })
+          .fontSize(13)
+          .type(InputType.Password)
+          .showPasswordIcon(true)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(10)
+          .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+          .width('90%')
+          .onChange((value: string) => {
+            this.backendTokenInput = value;
+          });
+
+        Divider()
+          .width('90%')
+          .color('#E5E7EB');
+
+        Text('API Key（仅直连时使用）\n不填后端地址时，助手直接调用 DeepSeek。Key 仅保存在本机沙箱，不会打包进安装包。')
+          .fontSize(12)
+          .fontColor('#6B7280')
+          .lineHeight(18)
+          .width('90%');
+
+        TextInput({ text: this.apiKeyInput, placeholder: 'sk-...' })
+          .fontSize(13)
+          .type(InputType.Password)
+          .showPasswordIcon(true)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(10)
+          .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+          .width('90%')
+          .onChange((value: string) => {
+            this.apiKeyInput = value;
+          });
+
+        Row({ space: 12 }) {
+          Button('清除')
+            .fontSize(13)
+            .fontColor('#DC2626')
+            .height(36)
+            .padding({ left: 20, right: 20 })
+            .backgroundColor('#FEF2F2')
+            .borderRadius(18)
+            .onClick(() => {
+              // Both are cleared together: leaving a stale API Key behind after
+              // switching to a backend would keep a vendor credential on the
+              // device for no reason.
+              new AiBackendStore().clear();
+              new ApiKeyStore().clearKey();
+              this.backendUrlInput = '';
+              this.backendTokenInput = '';
+              this.usingBackend = false;
+              this.apiKeyInput = '';
+              this.apiKeyConfigured = false;
+              promptAction.showToast({ message: 'AI 配置已清除', duration: 1500 });
+            });
+
+          Button('保存')
+            .fontSize(13)
+            .fontColor('#FFFFFF')
+            .height(36)
+            .padding({ left: 28, right: 28 })
+            .backgroundColor(this.canSaveSettings() ? '#1A56DB' : '#D1D5DB')
+            .borderRadius(18)
+            .enabled(this.canSaveSettings())
+            .onClick(() => {
+              this.saveSettings();
+            });
+        }
         .width('90%')
-        .onChange((value: string) => {
-          this.apiKeyInput = value;
-        });
-
-      Row({ space: 12 }) {
-        Button('清除')
-          .fontSize(13)
-          .fontColor('#DC2626')
-          .height(36)
-          .padding({ left: 20, right: 20 })
-          .backgroundColor('#FEF2F2')
-          .borderRadius(18)
-          .onClick(() => {
-            new ApiKeyStore().clearKey();
-            this.apiKeyInput = '';
-            this.apiKeyConfigured = false;
-            promptAction.showToast({ message: 'API Key 已清除', duration: 1500 });
-          });
-
-        Button('保存')
-          .fontSize(13)
-          .fontColor('#FFFFFF')
-          .height(36)
-          .padding({ left: 28, right: 28 })
-          .backgroundColor(this.apiKeyInput.trim().length > 0 ? '#1A56DB' : '#D1D5DB')
-          .borderRadius(18)
-          .enabled(this.apiKeyInput.trim().length > 0)
-          .onClick(() => {
-            const trimmed = this.apiKeyInput.trim();
-            if (trimmed.length === 0) {
-              return;
-            }
-            new ApiKeyStore().saveKey(trimmed);
-            this.apiKeyInput = trimmed;
-            this.apiKeyConfigured = true;
-            this.showSettingsSheet = false;
-            promptAction.showToast({ message: 'API Key 已保存', duration: 1500 });
-          });
+        .justifyContent(FlexAlign.Center);
       }
-      .width('90%')
-      .justifyContent(FlexAlign.Center);
+      .width(StyleConstants.FULL_WIDTH)
+      .padding({ top: 12, bottom: 24 });
     }
     .width(StyleConstants.FULL_WIDTH)
     .height('100%')
     .backgroundColor('#F3F4F6')
-    .padding({ top: 12 });
+    .align(Alignment.Top);
   }
 
   @Builder

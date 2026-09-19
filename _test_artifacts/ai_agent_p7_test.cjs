@@ -2019,8 +2019,11 @@ const http = {
 };
 const Logger = { info() {}, warn() {}, error() {}, debug() {} };
 `;
+const aiBackendModule = loadArkTs(`${SERVICE_DIR}AiBackend.ets`);
+global.__aiBackendModule = aiBackendModule;
 const proxyModule = loadArkTs(`${SERVICE_DIR}KnowledgeEmbeddingProxy.ets`,
-  `${MODEL_STUB}\nconst { KnowledgeEmbeddingBatch } = global.__embeddingModule;\n${HTTP_STUB}`);
+  `${MODEL_STUB}\nconst { KnowledgeEmbeddingBatch } = global.__embeddingModule;\n` +
+  `const { AiBackend, BACKEND_EMBED_PATH } = global.__aiBackendModule;\n${HTTP_STUB}`);
 const proxySrc = readSource(`${SERVICE_DIR}KnowledgeEmbeddingProxy.ets`);
 
 async function runEmbeddingProxyChecks() {
@@ -2098,11 +2101,12 @@ async function runEmbeddingProxyChecks() {
       return a === null && b === null && c === null && d === null;
     })(), 'all null', 'all null');
 
-  check('L 代理', '配置来源只读 AppStorage 的一个 URL 键，读不到就是未配置（不抛异常）',
+  check('L 代理', '配置来源复用 AiBackend（同一份后端配置），代理自己不另设一份 URL 键',
     typeof KnowledgeEmbeddingProxy.fromAppStorage === 'function' &&
     KnowledgeEmbeddingProxy.fromAppStorage().isConfigured() === false &&
-    proxySrc.indexOf('EMBEDDING_PROXY_KEY') >= 0,
-    'unconfigured', 'unconfigured');
+    proxySrc.indexOf('AiBackend') >= 0 &&
+    proxySrc.indexOf('BACKEND_URL_KEY') < 0,
+    'delegates', 'delegates');
 
   check('L 代理', '纯解析函数可独立测试：合法载荷解码，空串为 null',
     (() => {
