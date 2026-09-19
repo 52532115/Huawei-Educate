@@ -56,6 +56,45 @@ const mutants = [
     from: 'server/logs/',
     to: 'server/logs-are-fine/',
   },
+  {
+    // 2026-09-19 真实事故：服务被中断后停在 Ready，端口无人监听，-RestartCount 没救回来。
+    name: '注册时漏掉看门狗触发器（服务一死就永久停在 Ready，要等下次登录）',
+    file: 'D:/Education_Framework_Code_V1/server/scripts/manage-autostart.ps1',
+    from: '-Trigger @($logonTrigger, $watchdogTrigger)',
+    to: '-Trigger @($logonTrigger)',
+  },
+  {
+    // 实测踩到的那个：挂得上去、读得回来、永不触发。
+    name: '把重复挂到登录触发器上（装得像成功，但在已登录的会话里永不触发）',
+    file: 'D:/Education_Framework_Code_V1/server/scripts/manage-autostart.ps1',
+    from: "    $logonTrigger.Delay = 'PT30S'",
+    to: "    $logonTrigger.Delay = 'PT30S'\n    $logonTrigger.Repetition = $watchdogTrigger.Repetition",
+  },
+  {
+    name: '给重复加上有限时长（看门狗 30 天后静默停止，与 ExecutionTimeLimit 同类坑）',
+    file: 'D:/Education_Framework_Code_V1/server/scripts/manage-autostart.ps1',
+    from: '-RepetitionInterval (New-TimeSpan -Minutes $WatchdogMinutes)',
+    to: '-RepetitionInterval (New-TimeSpan -Minutes $WatchdogMinutes) -RepetitionDuration (New-TimeSpan -Days 30)',
+  },
+  {
+    name: '看门狗间隔默认值改成 0（不重复 / 被拒）',
+    file: 'D:/Education_Framework_Code_V1/server/scripts/manage-autostart.ps1',
+    from: '[int]$WatchdogMinutes = 5',
+    to: '[int]$WatchdogMinutes = 0',
+  },
+  {
+    name: '删掉 serve.ps1 的端口守卫（看门狗的幂等前提没了，每个周期会再起一份）',
+    file: 'D:/Education_Framework_Code_V1/server/scripts/serve.ps1',
+    from: 'nothing to do.',
+    to: 'still starting anyway.',
+  },
+  {
+    // 实测踩到：Register-ScheduledTask 失败是非终止错误，脚本继续往下跑并打印"已安装"。
+    name: '去掉安装后的回读确认（注册失败也会报"已安装"）',
+    file: 'D:/Education_Framework_Code_V1/server/scripts/manage-autostart.ps1',
+    from: '    if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {',
+    to: '    if ($false) {',
+  },
 ];
 
 function runDeployTests() {

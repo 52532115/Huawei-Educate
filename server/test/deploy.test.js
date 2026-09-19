@@ -407,7 +407,7 @@ test('自启任务的三个关键设置不能丢', () => {
   const code = psCode(read('scripts/manage-autostart.ps1'));
 
   assert.ok(code.indexOf('-AtLogOn') >= 0, '应当是登录触发');
-  assert.ok(code.indexOf("$trigger.Delay = 'PT30S'") >= 0,
+  assert.ok(code.indexOf("$logonTrigger.Delay = 'PT30S'") >= 0,
     '登录后要延迟 30 秒：服务一起来就要出网连厂商，太早可能还没网');
   assert.ok(code.indexOf('-MultipleInstances IgnoreNew') >= 0,
     '重复登录 / RDP 重连不该起第二份');
@@ -417,6 +417,51 @@ test('自启任务的三个关键设置不能丢', () => {
     code.indexOf('-ExecutionTimeLimit (New-TimeSpan -Seconds 0)') >= 0,
     'ExecutionTimeLimit 必须是不限时：任务计划默认 3 天，服务会在第 4 天静默死掉',
   );
+});
+
+test('自启任务带看门狗：动作按周期重复，否则服务一死就永久停在 Ready', () => {
+  // 2026-09-19 实测：服务被中断（退出码 0xC000013A）后**没有自愈** ——
+  // 任务状态回到 Ready、端口无人监听，而 -RestartCount 完全没起作用：
+  // 那个设置管的是"启动失败"，管不了"起来几小时后进程死掉"。
+  // 只靠 -AtLogOn，真实语义是"登录时启动过一次"，不是"正在运行"。
+  const code = psCode(read('scripts/manage-autostart.ps1'));
+
+  assert.ok(code.indexOf('-Trigger @($logonTrigger, $watchdogTrigger)') >= 0,
+    '看门狗必须是**独立触发器**并和登录触发器一起注册');
+  assert.ok(code.indexOf('$logonTrigger.Repetition') < 0,
+    '绝不能把重复挂到登录触发器上：登录触发器的重复窗口锚定在登录事件上，'
+      + '任务装得漂漂亮亮（Repetition.Interval 读回来是 PT1M），'
+      + '但在"任务安装之前就已经登录"的会话里永远不会触发 —— 装了等于没装。'
+      + '实测：杀掉服务等 150 秒，它没有自己回来');
+  assert.ok(code.indexOf('-RepetitionInterval (New-TimeSpan -Minutes $WatchdogMinutes)') >= 0,
+    '重复间隔要通过 $WatchdogMinutes 给出，别写死一个没法调的数');
+  assert.ok(code.indexOf('-RepetitionDuration') < 0,
+    '不要出现 -RepetitionDuration：省略它才是"无限重复"，给了有限时长看门狗会在若干天后静默停止'
+      + '（与 ExecutionTimeLimit 同一类"到期即失效"的坑）；而想当然地传 [TimeSpan]::MaxValue '
+      + '会被任务计划拒收 —— 实测 Duration 越界、任务根本没注册，脚本却照样报"已安装"');
+  assert.ok(/\[int\]\$WatchdogMinutes\s*=\s*[1-9]\d*/.test(code),
+    '$WatchdogMinutes 必须有非零默认值，否则 -RepetitionInterval 0 会被拒或退化成不重复');
+  assert.ok(code.indexOf('if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue))') >= 0
+    && code.indexOf('throw "注册没有成功') >= 0,
+    '安装完必须把任务读回来确认再报成功：Register-ScheduledTask 的失败是非终止错误，'
+      + '$ErrorActionPreference 拦不住它，不回读就会对没建成的任务打印"已安装"');
+
+  // 看门狗敢每个周期无脑重跑，前提是运行器幂等。这条断言把那个前提钉住：
+  // 哪天 serve.ps1 的端口守卫被删掉，这里的重复就会变成"每个周期再起一份"。
+  const serveCode = psCode(read('scripts/serve.ps1'));
+  assert.ok(/nothing to do/i.test(serveCode),
+    'serve.ps1 必须保留端口守卫（占用即退出），看门狗的安全性建立在它上面');
+
+  // 恰好构造两个触发器。这条断言来自一次真实的翻车：改代码时留下了没用上的
+  // `$trigger = New-ScheduledTaskTrigger -AtLogOn …` 死代码，于是「必须是登录触发」
+  // 这条断言被死代码喂绿了 —— 变异测试（把注册用的那行改成 -AtStartup）居然全绿。
+  // 静态断言必须钉在**真正被注册的东西**上，数目对不上就说明有影子代码。
+  const triggerConstructions = (code.match(/New-ScheduledTaskTrigger/g) || []).length;
+  assert.equal(triggerConstructions, 2,
+    `应当恰好构造两个触发器（登录 + 看门狗），实际 ${triggerConstructions} 个 —— 多出来的多半是没人用的死代码`);
+  const logonMentions = (code.match(/-AtLogOn/g) || []).length;
+  assert.equal(logonMentions, 1,
+    `-AtLogOn 应当只出现一次（登录触发器），实际 ${logonMentions} 次`);
 });
 
 test('自启任务调用的运行器真实存在', () => {
